@@ -1,0 +1,1119 @@
+#!/usr/bin/env perl
+
+use strict;
+use warnings;
+
+use Time::HiRes;
+use Getopt::Long;
+use Sys::Hostname;
+use IPC::Open2;
+use Time::HiRes qw( gettimeofday );
+use POSIX qw ( mkfifo setsid );
+use Fcntl;
+use FindBin qw ($RealScript $RealBin);
+use File::Basename;
+use Pod::Usage;
+
+use Data::Dumper;
+
+# Forward declare all subs
+sub LoadConfig;
+sub InjectCommand;
+sub shellQuote;
+sub buildCommandRefArray;
+sub buildCommand;
+sub spawnTerm;
+sub checkIfBlacklisted;
+sub ListWindows;
+sub BulkDetach;
+sub BulkSpawn;
+sub ClientMap;
+sub CleanExit;
+sub InstanceCheck;
+sub RofiLauncher;
+sub RofiMenu;
+sub PauseSelf;
+sub KillSelf;
+
+
+# Add signal handlers, load our config on start
+BEGIN {
+  $SIG{TERM}  = \&CleanExit; 
+  $SIG{HUP}   = \&LoadConfig;
+}
+
+my (
+  $config,  $configfile,   $killrc, $pause,
+  $detach,  $background,   $v,      $noclean,
+  $host,    $help,         %publicCommands,
+  %cli, %mapping, %commandParse, %commandText
+);
+
+$configfile = join('/', ( $ENV{'HOME'}, qw(.tmuxc.conf) ) );
+$noclean    = 1;
+$v          = 0;
+$pause      = 0;
+
+GetOptions(
+  "config|c=s"    => \$configfile,
+  "session|s=s"   => \$cli{session},
+  "host|h=s"      => \$cli{host},
+  "detach|d"      => \$cli{detach},
+  "background|b"  => \$cli{background},
+  "rce|r"         => \$cli{killrc},
+  "verbose|v"     => \$v,
+  "new|n"         => sub { LoadConfig; InjectCommand("new-window -d"); },
+  "launcher|l"    => sub { LoadConfig; RofiLauncher; },
+  "menu|m"        => sub { LoadConfig; RofiMenu; },
+  "exit|e"        => sub { LoadConfig; InjectCommand("tmuxc KillSelf"); },
+  "pause|p"       => sub { LoadConfig; InjectCommand("tmuxc PauseSelf"); },
+  "raw|r=s"       => sub { my (undef, $cmd) = @_; LoadConfig; InjectCommand($cmd); },
+  "help|?"        => \$help,
+);
+
+pod2usage( -verbose => 2 ) if $help;
+
+
+LoadConfig;
+
+# Double forking is required to avoid zombie xterms
+if ($cli{background}) {
+  my $fpid = fork;
+  exit if $fpid;    # kill first parent
+  open STDIN,  '/dev/null';
+  open STDOUT, '>/dev/null';
+  open STDERR, '>/dev/null';
+  setsid();
+  $fpid = fork;
+  exit if $fpid;
+}
+
+# We're through the fire, allow cleaning up after ourselves
+$noclean = 0;
+
+# Check if an instance for this specific host and session is running
+if ( -f $config->{pidfile} ) {
+  open PID, '<', $config->{pidfile};
+  my $pid = <PID>;
+  close PID;
+  if ( kill( 0, $pid ) ) {
+    die "$config->{pidfile} exists, and is running\n";
+  }
+}
+
+# Write our PID to a file, regardless of fg or bg state
+open PID, '>', $config->{pidfile};
+print PID $$;
+close PID;
+
+while (1) {
+
+  %mapping = ();
+  my @cmd;
+
+  # Remote host mode!
+  # Check if we have a ControlMaster session, create it if not
+  if (defined($host)) {
+    @cmd = buildCommand( undef, [ qq(ssh -O check -o ControlPath=$config->{temp}ssh/%C), $cli{host} ]);
+    qx(@cmd);
+
+    # Master isn't running, start up a new ControlMaster
+    if ( ( $? >> 8 ) != 0 ) {
+      if ($v) { print STDERR "ControlMaster for $host not running, creating one\n"; }
+      @cmd = buildCommand( undef, [ qq(ssh),
+        qq(-o ServerAliveInterval=3),
+        qq(-o ServerAliveCountMax=2),
+        qq(-o ControlMaster=yes),
+        qq(-o ControlPersist=10m),
+        qq(-o ControlPath=$config->{temp}ssh/%C),
+        qq(-f -N),
+        $host ] );
+      qx(@cmd);
+    }
+  }
+
+  # Tell the remote instance to kill itself, assuming it's running ...
+  if (($killrc) and ($host)) {
+    my $control = join('-', qw(localhost), $config->{session});
+    @cmd = buildCommand( $cli{host}, [ qw(tmuxc -h localhost -s), $config->{session}, qw(-e) ]);
+    print Dumper(@cmd);
+    qx(@cmd);
+  }
+
+
+  # Check if session exists
+  @cmd = buildCommand( $host, [ qw(tmux has-session -t), $config->{session}, ] );
+  qx(@cmd);
+
+  # If the session doesn't exist, use the user-defined method if it exists, else make a new empty one
+  if ( ( $? >> 8 ) != 0 ) {
+    my $chost = $config->{chost};
+    my $sess  = $config->{session};
+    my $initialize = $config->{hosts}{$chost}{$sess}{initialize} || [ qw(tmux new-session -d -s), $sess ];
+
+    if ($v) { print STDERR "## Initializing session: $sess\n"; }
+
+    @cmd = buildCommand( $host, $initialize );
+    qx(@cmd);
+
+    if ( ( $? >> 8 ) != 0 ) {
+      if ($v) { print STDERR "## Session initilization failed, exiting\n"; }
+      die;
+    }
+  }
+
+  # Check if control session exists
+  @cmd = buildCommand( $host, [ qw(tmux has-session -t), $config->{control}, ] );
+  qx(@cmd);
+
+  if ( ( $? >> 8 ) == 0 ) {
+    if ($v) { print STDERR "## Killing existing control session\n"; }
+    @cmd = buildCommand( $host, [ qw(tmux kill-session -t), $config->{control}, ] );
+    qx(@cmd);
+  }
+
+  # Create control clone session
+  @cmd = buildCommand(
+    $host,
+    [
+      qw(tmux new-session -d -t), $config->{session},
+      qw(-s),                     $config->{control},
+    ]
+  );
+  qx(@cmd);
+
+  # Attach to control session in control mode
+  @cmd = buildCommand( $host, [ qw(tmux -C attach-session -t), $config->{control}, ] );
+
+  my $sess = $config->{session};
+  my ( $pid, $child_out, $child_in );
+  my $blockCapture = 0;
+  my ( @block, $function, $result );
+
+  $pid = open2( $child_out, $child_in, @cmd );
+
+  # Seed our initial list of windows
+  print $child_in $commandText{'ListWindows'};
+
+  # Detach then spawn windows, otherwise spawn windows
+  if ($detach) {
+    print $child_in $commandText{'BulkDetach'};
+    print $child_in $commandText{'BulkSpawn'};
+  }
+  else {
+    print $child_in $commandText{'BulkSpawn'};
+  }
+
+  # Create our command channel
+  unless ( -p $config->{command} ) {
+    unlink $config->{command};
+    mkfifo( $config->{command}, 0700 );
+  }
+
+  # Open it up non-blocking, read-only
+  sysopen( CONTROL_FIFO, $config->{command}, O_NONBLOCK | O_RDONLY );
+
+  # Install our USR1 handler to process anything in the FIFO
+  $SIG{USR1} = sub {
+    if ($v) { print STDERR "Inside USR1 handler\n"; }
+    my @commands = <CONTROL_FIFO>;
+    if ($v) { print Dumper @commands; }
+    foreach my $line (@commands) {
+      if ($pause) {
+        next unless ($line =~ m/tmuxc PauseSelf/);
+      }
+      # Lines prefixed with tmuxc hit our internal command dispatcher
+      if ( $line =~ m/^tmuxc\s(.*)/ ) {
+        # The command causes tmux to print a block output, which we later parse
+        if ( exists( $commandText{$1} ) ) {
+          print $child_in $commandText{$1};
+        } elsif ( exists( $publicCommands{$1} ) ) {
+          # Execute a command directly with no required input
+          $publicCommands{$1}->();
+        } else {
+          print STDERR "Unknown command: $1\n";
+        }
+      } else {
+        # everything else is assumed to be a raw tmux command
+        print $child_in "$line\n";
+      }
+    }
+  };
+
+  # Main event loop
+  while ( my $line = <$child_out> ) {
+    next if $pause;
+    next if $line =~ m/^\%output/;
+    $line =~ s/\r\n/\n/g;
+    if ($v) { print STDERR "## $line"; }
+
+    # Trigger block capture mode
+    if ( $line =~ m/^\%begin/ ) {
+      $blockCapture = 1;
+      next;
+    }
+
+    # Blocks can end with either end or error
+    if ( $line =~ m/^\%end/ ) {
+      $blockCapture = 0;
+      next unless defined($function);
+      if ($v) { print STDERR "## Captured $function block:\n"; }
+
+      my $cmd = $function;
+      if ( exists( $commandParse{$cmd} ) ) {
+        $commandParse{$cmd}->( \@block, $child_in );
+      }
+      else {
+        if ($v) { print STDERR "## No handler for $cmd\n"; }
+      }
+      @block    = ();
+      $function = undef;
+      next;
+    }
+
+    # Push the line to the current block
+    if ($blockCapture) {
+      ( $function, $result ) = split( /:/, $line );
+      chomp($result);
+      push @block, $result;
+      next;
+    }
+
+    # This event produces a TON of spam
+    # Linked sessions result in every session producing this, with out saying where it comes from
+    # Multiple conditions are used to keep from spawning an infinite sequence of windows
+    if ( $line =~ m/^\%window-add\s(\@\d+)/ ) {
+      if ( exists $mapping{windows}{$1}{'pending'} ) {
+
+        # This is removed only by spawnTerm
+        if ($v) { print STDERR "## Session pending for $1\n"; }
+        next;
+      }
+      elsif ( defined $mapping{clients}{$1} ) {
+        if ($v) { print STDERR "## One or more clients attached to $1\n"; }
+        next;
+      }
+      elsif ( $mapping{windows}{$1}{'blacklisted'} ) {
+
+        # When a window is added to a running session, we do not know the name of the window
+        # blacklisting only works when initially connecting to a session
+        if ($v) { print STDERR "## Window name $1 is blacklisted\n"; }
+        next;
+      }
+      elsif ( $mapping{windows}{$1}{ignore} ) {
+        if ($v) { print STDERR "## Ignore flag set for $1\n"; }
+        next;
+      }
+      else {
+        $mapping{windows}{$1}{'pending'} = 1;
+        print $child_in $commandText{'ListWindows'};
+        if ($v) { print STDERR "## WA: Spawning a terminal for $1\n"; }
+        spawnTerm( $host, $sess, $1 );
+        next;
+      }
+    }
+
+    # Update our internal knowledge of the window name
+    # Currently not really useful ...
+    if ( $line =~ m/^\%window-renamed\s(@\d+)\s(.*)/ ) {
+      print $child_in $commandText{'ListWindows'};
+      next;
+    }
+
+    # Update our client <> window map - two clients likely point to a single window
+    if ( $line =~ m/^\%session-window-changed\s(\$\d+)\s(\@\d+)/ ) {
+      if ($v) { print STDERR "## " . $commandText{'ClientMap'}; }
+      print $child_in $commandText{'ClientMap'};
+      next;
+    }
+
+    # Produced when a client attaches to a session,
+    # %client-session-changed /dev/pts/10 $163 penthe-global-session-1545894242-319412-45
+    # This is probably a useless event to process
+    if ( $line =~ m/^\%client-session-changed\s(.*)\s(\$\d+)\s([\w-]+)/ ) {
+      if ($v) { print STDERR "## " . $commandText{'ClientMap'}; }
+      print $child_in $commandText{'ClientMap'};
+      next;
+    }
+
+    # Produced when a client attaches or detaches
+    # This is probably a useless event to process
+    if ( $line =~ m/^%sessions-changed/ ) {
+      if ($v) { print STDERR "## " . $commandText{'ClientMap'}; }
+      print $child_in $commandText{'ClientMap'};
+      next;
+    }
+
+    # Produced when a window is closed, e.g. exit from a shell
+    # Kill all attached sessions viewing that window
+    if ( $line =~ m/^%unlinked-window-close\s(@\d+)/ ) {
+      next unless exists $mapping{clients}{$1};
+      while ( @{ $mapping{clients}{$1} } ) {
+        my $client = pop @{ $mapping{clients}{$1} };
+        if ($v) {
+          print STDERR "# Killing session $client, window $1 closed\n";
+        }
+        print $child_in $commandText{'KillClient'} . "$client\n";
+      }
+      delete $mapping{clients}{$1};
+      delete $mapping{windows}{$1};
+      print $child_in $commandText{'ListWindows'};
+      print $child_in $commandText{'ClientMap'};
+
+    }
+  }
+
+}
+
+END {
+  exit if $noclean;
+
+  # Exit if the pidfile on disk doesn't match our pid
+  if ( -f $config->{pidfile} ) {
+    open PID, '<', $config->{pidfile};
+    my $pid = <PID>;
+    close PID;
+    exit unless ( $pid == $$ );
+  }
+
+  # Clean up the command and pidfiles on exit
+  CleanExit;
+}
+
+# Remove our FIFO and pidfile
+# Called directly by our TERM sig handler
+sub CleanExit {
+  exit if $noclean;
+  unlink $config->{command};
+  unlink $config->{pidfile};
+  exit;
+}
+
+# Load our default config file / user defined
+# Define other control values used throughout the multiverse
+sub LoadConfig {
+  undef $config;
+
+  # Read in the config file
+  if ( -e $configfile ) {
+    $config = do($configfile) or die $!;
+  }
+  else {
+    $config->{terminal} = "xterm";
+    $config->{temp}     = join('/', ( $ENV{'HOME'}, qw(.tmuxc) ));
+  }
+
+  # strip a trailing slash if present, thanks Brian D Foy
+  #$config->{temp} =~ s|/\z||;
+ 
+  # Add a trailing slash, so joins are easier
+  $config->{temp} =~ s|/*$|/|;
+
+  # Set our hostname config key
+  my $chost = defined($cli{host}) ? $cli{host} : "localhost";
+  $config->{chost} = $chost; 
+
+  # Set our $host
+  $host = (defined($cli{host}) and ($cli{host} ne "localhost")) ? $cli{host} : undef;
+
+  # Determine which session name takes precedence
+  if ( defined($cli{session}) ) {
+    # Set on the command line
+    $config->{session} = $cli{session};
+  } elsif ( defined( $config->{hosts}{$chost} ) ) {
+    # Pick the first session under this host, sorted
+    my ($ss) = sort keys %{ $config->{hosts}{$chost} };
+    $config->{session} = $ss;
+  } elsif ( not defined( $config->{session} ) ) {
+    # Not set at all in the config file, set a default
+    $config->{session} = "global-session";
+  }
+
+  # Determine which detach policy takes precedence
+  my $sess = $config->{session};
+  if (defined($cli{detach})) {
+    # set on the CLI
+    $detach = $cli{detach};
+  } elsif (defined($config->{hosts}{$chost}{$sess}{detach})) {
+    # Set for a specific host/session combo
+    $detach = $config->{hosts}{$chost}{$sess}{detach};
+  } elsif (defined($config->{hosts}{$chost}{detach})) {
+    # Set for a specific host
+    $detach = $config->{hosts}{$chost}{detach};
+  } elsif (defined($config->{detach})) {
+    # Set globally in the config
+    $detach = $config->{detach};
+  }
+
+  # Determine which kill remote control policy takes precedence
+  if (defined($cli{killrc})) {
+    # set on the CLI
+    $killrc = $cli{killrc};
+  } elsif (defined($config->{hosts}{$chost}{$sess}{killrc})) {
+    # Set for a specific host/session combo
+    $killrc = $config->{hosts}{$chost}{$sess}{killrc};
+  } elsif (defined($config->{hosts}{$chost}{killrc})) {
+    # Set for a specific host
+    $killrc = $config->{hosts}{$chost}{killrc};
+  } elsif (defined($config->{killrc})) {
+    # Set globally in the config
+    $killrc = $config->{killrc};
+  }
+
+  # Make our temp directory and subdirectories
+  mkdir $config->{temp} unless -d $config->{temp};
+  my @subs = ( "ssh", "control","pid" );
+  foreach my $dir (@subs) {
+    my $fulldir = join('', $config->{temp}, $dir);
+    mkdir $fulldir unless -d $fulldir;
+  }
+
+  # Set our hostname
+  ( $config->{hostname}, undef ) = split( /\./, hostname, 2 );
+
+  # Define our control session
+  $config->{control} = join( '', ( $config->{hostname}, qw(-), $config->{session}, qw(-control) ) );
+
+  # Define our command fifo
+  $config->{command} = join( '', ( $config->{temp}, qw(control/), $config->{chost}, qw(-), $config->{session}, qw(.control) ));
+
+  # Define our PID file
+  $config->{pidfile} = join( '', ( $config->{temp}, qw(pid/), $config->{chost}, qw(-), $config->{session}, qw(.pid) ));
+
+  %publicCommands = (
+    'KillSelf'    => \&KillSelf,
+    'PauseSelf'   => \&PauseSelf,
+  );
+
+  # The first field in the format string indicates the lookup key for %commandParse
+  %commandText = (
+    'ListWindows'   => "lsw -F 'ListWindows:#{session_group},#{window_id},#{window_name},#{window_index}' -t " . $config->{session} . "\n",
+    'BulkSpawn'     => "lsc -F 'BulkSpawn:#{session_group},#{session_id},#{session_name},#{window_id}'\n",
+    'BulkDetach'    => "lsc -F 'BulkDetach:#{session_group},#{session_id},#{session_name},#{window_id}'\n",
+    'ClientMap'     => "lsc -F 'ClientMap:#{session_group},#{session_id},#{session_name},#{window_id},#{window_name}'\n",
+    'KillClient'    => "kill-session -t ",
+  );
+
+  %commandParse = (
+    'ListWindows' => \&ListWindows,
+    'BulkSpawn'   => \&BulkSpawn,
+    'BulkDetach'  => \&BulkDetach,
+    'ClientMap'   => \&ClientMap,
+  );
+  if ($v) { print Dumper($config); }
+}
+
+# Simple command dispatcher, InjectCommand picks/prompts for the session
+sub RofiMenu {
+  my %menu = (
+    'Create New Window'      => 'new-window -d',
+    'Detach Session Windows' => 'tmuxc BulkDetach',
+    'Kill Control Daemon'    => 'tmuxc KillSelf',
+    'Open All Windows'       => 'tmuxc BulkSpawn',
+  );
+
+  my ( $child_out, $child_in );
+  my $pid = open2( $child_out, $child_in, "rofi -dmenu -i" );
+
+  foreach my $item ( sort keys %menu ) {
+    print $child_in "$item\n";
+  }
+  close($child_in);
+  my $option = <$child_out>;
+  exit unless defined($option);
+  chomp($option);
+  InjectCommand( $menu{$option} );
+  exit;
+}
+
+sub InstanceCheck {
+
+  # Generate a list of instances from config file 
+  my ( @check, $instances );
+  foreach my $host ( sort keys %{ $config->{hosts} } ) {
+    foreach my $session ( sort keys %{ $config->{hosts}{$host} } ) {
+      push @check, "$host-$session";
+    }
+  }
+ 
+  # Check each instance defined in config file
+  for my $session (@check) {
+    my $control = join( '', ( $config->{temp}, qw(control/), $session , ".control" ));
+    my $pidfile = join( '', ( $config->{temp}, qw(pid/), $session , ".pid" ));
+    if ( -f $pidfile ) {
+      open PID, '<', $pidfile;
+      my $pid = <PID>;
+      close PID;
+
+      my $running = kill( 0, $pid );
+      if ($running) {
+        push @{ $instances->{running} }, $session;
+      } else {
+        push @{ $instances->{dead} }, $session;
+      }
+    } else {
+      push @{ $instances->{dead} }, $session;
+    }
+  }
+
+  my $cglob     = join( '', ( $config->{temp}, qw(control/), "*.control" ));
+  my @controls  = glob($cglob);
+
+
+  for (@controls) {
+    my $filename = basename($_);
+    $filename =~ s/\.control//;
+    #my ( $host, $sess ) = split( '-', $filename, 2 );
+
+    my $pidfile = $_;
+    $pidfile =~ s/control/pid/g;
+
+    if ( -f $pidfile ) {
+      open PID, '<', $pidfile;
+      my $pid = <PID>;
+      close PID;
+
+      my $running = kill( 0, $pid );
+      if ($running) {
+        unless ( grep { $_ eq $filename } @{ $instances->{running} } ) {
+          push @{ $instances->{running} }, $filename;
+        }
+      } else {
+        unless ( grep { $_ eq $filename } @{ $instances->{dead} } ) {
+          push @{ $instances->{dead} }, $filename;
+        }
+      }
+    }
+  }
+  return $instances;
+}
+
+# Determine which control sessions are running, prompt for anything else
+sub RofiLauncher {
+  my ( @dead, $child_out, $child_in );
+
+  my $instances = InstanceCheck;
+
+  if (defined($instances->{dead})) {
+    @dead = @{ $instances->{dead} };
+  }
+
+  my $response;
+  if ( scalar(@dead) > 0 ) {
+    my $pid = open2( $child_out, $child_in, "rofi -dmenu -format i" );
+    for (@dead) {
+      my ( $host, $sess ) = split( '-', $_, 2 );
+      print $child_in "$host - $sess\n";
+    }
+    close($child_in);
+    $response = <$child_out>;
+    close($child_out);
+  } else {
+    exit;
+  }
+  exit unless defined($response);
+  chomp($response);
+
+  my ( $host, $sess ) = split( /-/, $dead[$response], 2 );
+  my $myself = join( '/', ( $RealBin, $RealScript ) );
+  my $cmd;
+  if ( $host eq "localhost" ) {
+    $cmd = join( ' ', ( $myself, qw(-s), $sess, qw(-b) ) );
+  }
+  else {
+    $cmd = join( ' ', ( $myself, qw(-h), $host, qw(-s), $sess, qw(-b) ) );
+  }
+
+  my $fpid = fork;
+  if ( $fpid == 0 ) {
+    exit 255 unless open STDIN,  '/dev/null';
+    exit 255 unless open STDOUT, '>/dev/null';
+    exit 255 unless open STDERR, '>/dev/null';
+    setsid();
+    $fpid = fork;
+    if ( $fpid == 0 ) {
+      $noclean = 0;
+      exec($cmd);
+    }
+    exit;
+  }
+  waitpid( $fpid, 0 );
+  exit;
+}
+
+# If there's only one control session, inject a command into that FIFO
+# If there are multiple, prompt via rofi
+# TODO: Decouple this from rofi somehow ?
+
+sub InjectCommand {
+  my $command = shift;
+
+  if ($v) { print STDERR "## InjectCommand: $command\n"; }
+
+  my $instances = InstanceCheck;
+
+  my @sessions;
+  if (defined($instances->{running})) {
+    @sessions = @{ $instances->{running} };
+  } else {
+    exit;
+  }
+  my @sessmenu;
+
+  # An exact host and session were provided
+  if ($cli{host} and $cli{session}) {
+    my $session = join( '', $cli{host}, qw(-), $cli{session} );
+    if ( grep { $_ eq $session } @sessions ) {
+      push @sessmenu, $session;
+    }
+  # Find all hosts that match what was provided on the CLI
+  } elsif ($cli{host}) {
+    for (@sessions) {
+      if ($_ =~ m/$cli{host}/) {
+        push @sessmenu, $_
+      }
+    }
+  # Find all sessions that match what was provided on the CLi
+  } elsif ($cli{session}) {
+    for (@sessions) {
+      if ($_ =~ m/$cli{session}/) {
+        push @sessmenu, $_
+      }
+    }
+  # Nothing provided, prompt with all running hosts/sessions
+  } else {
+    @sessmenu = @sessions;
+  }
+
+  # I really should learn splice some day
+  if (($command =~ m/new-window/)
+    and (not defined($cli{host}))
+    and (not defined($cli{session}))) {
+    my @clean;
+    for (@sessmenu) {
+      my ( $host, $sess ) = split( '-', $_, 2 );
+      unless ($config->{hosts}{$host}{$sess}{skipnw}) {
+        push @clean, $_;
+      }
+    }
+    @sessmenu = @clean;
+  }
+
+  # Generate a menu / or pick if there's only one session
+  my ( $response, $session );
+  if ( scalar(@sessmenu) > 1 ) {
+    my ( $child_out, $child_in );
+    my $pid = open2( $child_out, $child_in, "rofi -dmenu -format i" );
+
+    for (@sessmenu) {
+      my ( $host, $sess ) = split( '-', $_, 2 );
+      print $child_in "$host - $sess\n";
+    }
+    close($child_in);
+
+    $response = <$child_out>;
+    exit unless defined($response);
+    chomp($response);
+    $session = $sessmenu[$response];
+  } elsif ( scalar(@sessmenu) == 1) {
+    $session = shift @sessmenu;
+  } else {
+    print "No running sessions\n";
+    exit;
+  }
+
+  my $control = join( '', ( $config->{temp}, qw(control/), $session , ".control" ));
+  my $pidfile = join( '', ( $config->{temp}, qw(pid/), $session , ".pid" ));
+
+  if ($v) { print STDERR "## My PID file is $pidfile\n"; }
+
+  my $pid;
+  if ( -f $pidfile ) {
+    open PID, '<', $pidfile;
+    $pid = <PID>;
+    close PID;
+  }
+
+  unless ( kill( 0, $pid ) ) {
+    print "$pid not running exiting!";
+    exit;
+  }
+
+  open CONTROL, '>', $control;
+  print CONTROL "$command";
+  close CONTROL;
+
+  # This sleep is actually important!
+  # With out it, there's a chance the USR1 handler won't read
+  # anything from the control fifo ... fuck.
+
+  sleep 0.5;
+  kill( 'USR1', $pid );
+  exit;
+}
+
+sub shellQuote {
+  my @return;
+
+  for my $group (@_) {
+    my @args = @$group;
+    for (@args) {
+      s/'/'"'"'/g;
+    }
+    push @return, join ' ', map { /^[-\/|@=_0-9a-z]+$/i ? $_ : qq{'$_'} } @args;
+  }
+
+  return join '|', @return;
+}
+
+sub buildCommandRefArray {
+  my $remote = shift;
+
+  if ($remote) {
+    my $cpath = join('', $config->{temp}, qw(ssh/%C) );
+    return [ qw(ssh -q -t -S), $cpath, $remote, shellQuote(@_) ];
+  }
+
+  return @_;
+}
+
+sub buildCommand {
+  my @list = buildCommandRefArray(@_);
+
+  return @{ $list[0] };
+}
+
+# Write out a custom shell script and launch it with our terminal
+sub spawnTerm {
+  my ( $host, $session, $window ) = @_;
+  my ( undef, $id ) = split( '@', $window );
+  my ( $sec, $usec ) = gettimeofday();
+  my $clone_session = $config->{hostname} . "-$session-$sec-$usec-$id";
+
+  my @cmd = buildCommand(
+    $host,
+    [
+      qw(tmux new-session -d -t),
+      $session,
+      qw(-s),
+      $clone_session,
+      qw(\; set-option destroy-unattached \; attach-session -t),
+      $clone_session,
+      qw(\; select-window -t),
+      $window
+    ]
+  );
+  my $tmux_command = join( ' ', @cmd );
+
+  my $script       = join( '', ( $config->{temp}, $clone_session));
+  my $start_script = qq|#!/bin/sh
+test -f $script && rm $script 
+exec $tmux_command
+|;
+
+  open SCRIPT, '>', $script;
+  print SCRIPT $start_script;
+  close SCRIPT;
+  chmod 0755, $script;
+
+  my @exec = @{ $config->{terminal} };
+  push @exec, $script;
+  if ($v) { print STDERR Dumper(@exec); }
+  my $fpid = fork;
+  if ( $fpid == 0 ) {
+    exit 255 unless open STDIN,  '/dev/null';
+    exit 255 unless open STDOUT, '>/dev/null';
+    exit 255 unless open STDERR, '>/dev/null';
+    setsid();
+    $fpid = fork;
+    if ( $fpid == 0 ) {
+      exec @exec;
+    }
+    exit;
+  }
+  waitpid( $fpid, 0 );
+  return;
+}
+
+# Return 1 if blacklisted, 0 if not
+sub checkIfBlacklisted {
+  my $window = shift;
+  if ($v) {
+    print STDERR "Checking if $window is blacklisted on $config->{chost}\n";
+  }
+
+  my $chost = $config->{chost};
+  my $sess  = $config->{session};
+
+  if ( defined( $config->{hosts}{$chost}{$sess}{blacklist} ) ) {
+    if ( grep { $_ eq $window } @{ $config->{hosts}{$chost}{$sess}{blacklist} } ) {
+      if ($v) { print STDERR "## Blacklisted window: $window\n"; }
+      return 1;
+    }
+  }
+  return 0;
+}
+
+# List every window, set the blacklisted flag where appropriate
+sub ListWindows {
+  my $block = shift;
+  for my $entry ( @{$block} ) {
+    my ( $group, $id, $name, $wid ) = split( ',', $entry );
+    $mapping{windows}{$id}{'name'}  = $name;
+    $mapping{windows}{$id}{'index'} = $wid;
+    $mapping{windows}{$id}{'blacklisted'} =
+      ( checkIfBlacklisted($name) ) ? 1 : 0;
+  }
+  if ($v) { print Dumper( \%mapping ); }
+}
+
+# Detach all clients from all windows, leaving everything else running
+# This will NOT mark a window as ignored
+sub BulkDetach {
+  my $block    = shift;
+  my $child_in = shift;
+
+  if ($v) { print STDERR "## BulkDetach start\n"; }
+  if ($v) { print Dumper( \%mapping ); }
+
+  for my $entry ( @{$block} ) {
+    my ( $group, $sid, $name, $wid ) = split( ',', $entry );
+
+    # Filter for our specific session group
+    next unless $config->{session} eq $group;
+
+    # Filter out our control session
+    next if $config->{control} eq $name;
+
+    if ($v) { print STDERR "## Detaching session $sid\n"; }
+    print $child_in $commandText{'KillClient'} . "$sid\n";
+  }
+}
+
+# Spawn a terminal for all non-blacklisted windows
+sub BulkSpawn {
+  my $block    = shift;
+  my $child_in = shift;
+
+  if ($v) { print STDERR "## BulkSpawn start\n"; }
+  if ($v) { print Dumper( \%mapping ); }
+
+  for my $entry ( @{$block} ) {
+    my ( $group, $sid, $name, $wid ) = split( ',', $entry );
+
+    # Filter for our specific session group
+    next unless $config->{session} eq $group;
+
+    # Filter out our control session
+    next if $config->{control} eq $name;
+
+    # Filter for our hostname in the linked session name
+    next unless $name =~ m/$config->{hostname}/;
+
+    # Don't push duplicate session ids
+    unless ( grep { $_ eq $sid } @{ $mapping{clients}{$wid} } ) {
+      push @{ $mapping{clients}{$wid} }, $sid;
+    }
+  }
+
+  foreach my $window ( keys %{ $mapping{windows} } ) {
+    if ( exists $mapping{clients}{$window} ) {
+      next;
+    }
+    else {
+      unless ( checkIfBlacklisted( $mapping{windows}{$window}{name} ) ) {
+        if ($v) {
+          print STDERR "## BulkSpawn: Spawning a terminal for $window\n";
+        }
+        delete $mapping{clients}{$window};
+        $mapping{windows}{$window}{'pending'} = 1;
+        spawnTerm( $host, $config->{session}, $window );
+      }
+    }
+  }
+  if ($v) { print STDERR "## BulkSpawn end\n"; }
+  if ($v) { print Dumper( \%mapping ); }
+}
+
+# Build a map of all windows and the clients viewing the window
+# If a client was viewing a window but has been closed, mark that window as ignored
+# Future open-all commands will skip that window while the same tmuxc controller is running
+sub ClientMap {
+  my $block    = shift;
+  my $child_in = shift;
+  my $sess     = $config->{session};
+  my @found_windows;
+  if ($v) { print STDERR "ClientMap start\n"; }
+  if ($v) { print Dumper( \%mapping ); }
+
+  # Purge existing mappings
+  my %previous = %mapping{clients};
+  delete $mapping{clients};
+
+  # Regenerate client <> window mappings
+  for my $entry ( @{$block} ) {
+    my ( $group, $sid, $name, $wid, $wname ) = split( ',', $entry );
+
+    # Filter for our specific session group
+    next unless $config->{session} eq $group;
+
+    # Filter out our control session
+    next if $config->{control} eq $name;
+
+    # Filter for our hostname in the linked session name
+    next unless $name =~ m/$config->{hostname}/;
+
+    # This is a session we control, attached to a window
+    push @{ $mapping{clients}{$wid} }, $sid;
+    $mapping{windows}{$wid}{'name'} = $wname;
+
+    # This is no longer pending, a session is pointed to it
+    delete $mapping{windows}{$wid}{'pending'};
+    push @found_windows, $wid;
+  }
+
+  foreach my $window ( keys %{ $previous{clients} } ) {
+    unless ( defined( $mapping{clients}{$window} ) ) {
+      if ($v) { print STDERR "$window missing from new map, setting ignore flag\n"; }
+      $mapping{windows}{$window}{ignore} = 1;
+    }
+  }
+
+  if ($v) { print STDERR "ClientMap end\n"; }
+  if ($v) { print Dumper( \%mapping ); }
+}
+
+sub PauseSelf {
+  $pause ^= 1;
+}
+
+sub KillSelf {
+  exit;
+}
+
+__END__
+
+=head1 NAME
+
+B<tmuxc> - TMUX terminal manager
+
+=head1 SYNOPSIS
+
+B<tmuxc> [options]
+
+=head1 OPTIONS
+
+=over 4
+
+=item B<--host|h>
+
+Connect to a tmux instance on the listed host.
+
+=item B<--session|s>
+
+Attach to the listed tmux session.
+
+=item B<--background|b>
+
+After connecting to a host and instance, background the daemon.
+
+=item B<--config|c>
+
+Use the specified configuration file, overriding the default location of F<~/.tmuxc.conf>.
+
+=item B<--detach|d>
+
+After connecting to a host and instance, detach any clients connected to the session.
+
+=item B<--verbose|v>
+
+Enable verbose/debugging mode to print extra details.
+
+=item B<--rce|r>
+
+After connecting to a remote host, kill the remote tmuxc instance monitoring our session.
+
+=item B<--new|n>
+
+Create a new window for the specified tmux session on the specified host.
+
+=item B<--launcher|l>
+
+Open up a rofi menu listing sessions from the .tmuxc.conf file that aren't running.
+
+=item B<--menu|m>
+
+Open up a rofi menu listing control options. If one instance is running, the command is executed on that instance. If multiple are running, prompt the running sessions.
+
+=item B<--exit|e>
+
+Tell a specified tmuxc instance to exit.
+
+=item B<--pause|p>
+
+Tell a specified tmuxc instance to toggle it's pause mode. When in pause mode, all tmux messages received are ignored, as are any commands sent to the FIFO or on the command line.
+
+=item B<--raw|r>
+
+Issue a raw tmux or tmuxc command to a specified instance.
+
+=back
+
+=head1 EXAMPLES
+
+Connect to a session labeled I<global-session> on the host I<shellhost>, then background.
+
+  tmuxc -h shellhost -s global-session -b
+
+Connect to the default session on localhost, then background.
+
+  tmuxc -b
+
+Issue the raw tmux command I<new-window -d> to the default session on localhost.
+
+  tmuxc -r 'new-window -d'
+
+=head1 SCRIPTING
+
+Each running instance of tmuxc creates a command FIFO that can be used to control tmux and tmuxc. The FIFO takes the form of F<hostname-session.control>, and by default is available in F<~/.tmuxc/control/>. Once you've written a command to the FIFO, send the B<USR1> signal to tmuxc. The PID is available in F<~/.tmuxc/pid/hostname-session.pid>. 
+
+See B<RAW COMMANDS> for examples. 
+=head1 RAW COMMANDS
+
+Raw commands can take multiple forms. Commands prefaced with I<tmuxc> hit the internal
+command dispatcher. Any other command is passed as-is to tmux. Most tmuxc commands are
+of no real use to end-users.
+
+=head2 EXAMPLES
+
+  tmuxc PauseSelf
+  new-window -d
+
+=head2 TMUXC INTERNAL COMMANDS
+
+=over 6
+
+=item B<BulkSpawn>
+
+Instruct tmuxc to spawn terminals for all windows that do not have an attached client.
+
+=item B<BulkDetach>
+
+Instruct tmuxc to close all clients attached to windows.
+
+=item B<KillSelf>
+
+Instruct tmuxc to cleanly exit.
+
+=item B<PauseSelf>
+
+Instruct tmuxc to ignore all input from the command line and from tmux, until this 
+option is toggled again.
+
+=back
+
+=head1 AUTHOR
+
+Zach Dykstra <dykstra.zachary@gmail.com>
+
+=cut
