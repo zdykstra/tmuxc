@@ -399,7 +399,7 @@ sub LoadConfig {
     $config = do($configfile) or die $!;
   }
   else {
-    $config->{terminal} = "xterm";
+    $config->{terminal} = [ qw(xterm) ];
     $config->{temp}     = join('/', ( $ENV{'HOME'}, qw(.tmuxc) ));
   }
 
