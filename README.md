@@ -59,3 +59,13 @@ Hosts and sessions do not need to be in the configuration file. You can simply r
 
 
 When a terminal is closed with out exiting the program running in the tmux window (e.g. exiting a shell), that specific window is marked as 'ignored' for the life of the tmuxc process. That means that when you create a new window, the one you just closed and a new one do not open up. You can re-open all windows for a session by running `tmuxc -m` and selecting Open All Windows, and then picking a session if multiple exist.
+
+Below is a sample i3 integration:
+
+```
+bindsym $mod+equal exec --no-startup-id tmuxc -l
+bindsym $mod+m exec --no-startup-id tmuxc -m
+bindsym $mod+Return exec --no-startup-id tmuxc -n
+```
+
+In order, there's a tmuxc session launcher, a tmuxc session manager (open/close windows, kill tmuxc), and a key to create a new window. If you have only one tmuxc instance running, `$mod+Return` creates a window in that session. If you have multiple instances, you're prompted to pick which one to use. The prompt can be bypassed by specifying a host and a session name to help narrow down which to use.
