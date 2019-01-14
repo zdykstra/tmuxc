@@ -2,6 +2,8 @@
 
 tmuxc attaches to a local or remote tmux session and breaks out each window into a local terminal. Each window in a session is tracked by tmuxc, and when found, a shell script is created that is executed by a terminal of your choice. The shell script creates a new cloned session that's part of the base session you're monitoring, sets a few options, and focuses a specific window.  When that window in tmux is closed, the cloned session is killed, causing the script to finish executing and the terminal to close.
 
+You'll need to modify .tmux.conf and bind a key to the command `new-window -d`. This will cause a new window to be created without changing which window the last in-focus terminal displays.
+
 Example ~/.tmuxc.conf for a local tmux instance
 ```
 {
@@ -54,3 +56,6 @@ Each host requires a separate instance of tmuxc to be run. Using the above examp
 * `tmuxc -h my.remote.server.com` to connect to the remote host, under the default session of 'global-session'
 
 Hosts and sessions do not need to be in the configuration file. You can simply run `tmuxc` as-is. The configuration file is just parsed by the internal `tmuxc -l` rofi mode to present a session launcher for you.
+
+
+When a terminal is closed with out exiting the program running in the tmux window (e.g. exiting a shell), that specific window is marked as 'ignored' for the life of the tmuxc process. That means that when you create a new window, the one you just closed and a new one do not open up. You can re-open all windows for a session by running `tmuxc -m` and selecting Open All Windows, and then picking a session if multiple exist.
