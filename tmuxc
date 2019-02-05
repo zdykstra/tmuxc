@@ -13,8 +13,12 @@ use Fcntl;
 use FindBin qw ($RealScript $RealBin);
 use File::Basename;
 use Pod::Usage;
+use Sys::Syslog qw(:standard :macros);
 
 use Data::Dumper;
+$Data::Dumper::Indent   = 1;
+$Data::Dumper::Sortkeys = 1;
+$Data::Dumper::Purity   = 1;
 
 # Forward declare all subs
 sub LoadConfig;
@@ -43,9 +47,10 @@ BEGIN {
 }
 
 my (
-  $config,  $configfile,   $killrc, $pause,
-  $detach,  $background,   $v,      $noclean,
-  $host,    $help,         %publicCommands,
+  $config,  $configfile,   $pause,
+  $v,       $vv,           $noclean,
+  $host,    $help,
+  %publicCommands,
   %cli, %mapping, %commandParse, %commandText
 );
 
@@ -60,8 +65,12 @@ GetOptions(
   "host|h=s"      => \$cli{host},
   "detach|d"      => \$cli{detach},
   "background|b"  => \$cli{background},
-  "rce|r"         => \$cli{killrc},
-  "verbose|v"     => \$v,
+  "killrc|k"      => \$cli{killrc},
+  "pauserc|P"     => \$cli{pauserc},
+  "reconnect|R"   => \$cli{reconnect},
+  "closeas|C"     => \$cli{closeas},
+  "syslog|S=s"    => \$cli{syslog},
+  "verbose|v+"    => \$v,
   "new|n"         => sub { LoadConfig; InjectCommand("new-window -d"); },
   "launcher|l"    => sub { LoadConfig; RofiLauncher; },
   "menu|m"        => sub { LoadConfig; RofiMenu; },
@@ -73,11 +82,14 @@ GetOptions(
 
 pod2usage( -verbose => 2 ) if $help;
 
-
 LoadConfig;
 
+if ($config->{syslog}) {
+  openlog( $RealScript, "ndelay,pid", $config->{syslog});
+}
+
 # Double forking is required to avoid zombie xterms
-if ($cli{background}) {
+if ($config->{background}) {
   my $fpid = fork;
   exit if $fpid;    # kill first parent
   open STDIN,  '/dev/null';
@@ -114,7 +126,7 @@ while (1) {
   # Remote host mode!
   # Check if we have a ControlMaster session, create it if not
   if (defined($host)) {
-    @cmd = buildCommand( undef, [ qq(ssh -O check -o ControlPath=$config->{temp}ssh/%C), $cli{host} ]);
+    @cmd = buildCommand( undef, [ qq(ssh -O check -o ControlPath=$config->{temp}ssh/%C), $host ]);
     qx(@cmd);
 
     # Master isn't running, start up a new ControlMaster
@@ -132,14 +144,17 @@ while (1) {
     }
   }
 
-  # Tell the remote instance to kill itself, assuming it's running ...
-  if (($killrc) and ($host)) {
+  # Tell the remote instance to kill itself
+  if (($config->{killrc}) and ($host)) {
     my $control = join('-', qw(localhost), $config->{session});
     @cmd = buildCommand( $cli{host}, [ qw(tmuxc -h localhost -s), $config->{session}, qw(-e) ]);
-    print Dumper(@cmd);
+    qx(@cmd);
+  # Tell the remote instance to pause itself 
+  } elsif (($config->{pauserc}) and ($host)) { 
+    my $control = join('-', qw(localhost), $config->{session});
+    @cmd = buildCommand( $cli{host}, [ qw(tmuxc -h localhost -s), $config->{session}, qw(-p) ]);
     qx(@cmd);
   }
-
 
   # Check if session exists
   @cmd = buildCommand( $host, [ qw(tmux has-session -t), $config->{session}, ] );
@@ -196,12 +211,14 @@ while (1) {
   print $child_in $commandText{'ListWindows'};
 
   # Detach then spawn windows, otherwise spawn windows
-  if ($detach) {
+  if ($config->{detach}) {
     print $child_in $commandText{'BulkDetach'};
     print $child_in $commandText{'BulkSpawn'};
+    print $child_in $commandText{'ClientMap'};
   }
   else {
     print $child_in $commandText{'BulkSpawn'};
+    print $child_in $commandText{'ClientMap'};
   }
 
   # Create our command channel
@@ -362,7 +379,7 @@ while (1) {
 
     }
   }
-
+  exit unless ($config->{reconnect});
 }
 
 END {
@@ -428,37 +445,49 @@ sub LoadConfig {
     # Not set at all in the config file, set a default
     $config->{session} = "global-session";
   }
+  
+  # Look up a number of keys that can be set at different levels
+  # If no value can be found, use a sane default
 
-  # Determine which detach policy takes precedence
   my $sess = $config->{session};
-  if (defined($cli{detach})) {
-    # set on the CLI
-    $detach = $cli{detach};
-  } elsif (defined($config->{hosts}{$chost}{$sess}{detach})) {
-    # Set for a specific host/session combo
-    $detach = $config->{hosts}{$chost}{$sess}{detach};
-  } elsif (defined($config->{hosts}{$chost}{detach})) {
-    # Set for a specific host
-    $detach = $config->{hosts}{$chost}{detach};
-  } elsif (defined($config->{detach})) {
-    # Set globally in the config
-    $detach = $config->{detach};
+  my %precedence;
+
+  my %resolve = ( 
+    "detach"      => 0,
+    "killrc"      => 0,
+    "pauserc"     => 0,
+    "reconnect"   => 1,
+    "closeas"     => 0,
+    "background"  => 0,
+    "syslog"      => 0,
+  );
+
+  foreach my $key (keys %resolve) {
+    if (defined($cli{$key})) {
+      # set on the CLI
+      $precedence{$key} = $cli{$key};
+    } elsif (defined($config->{hosts}{$chost}{$sess}{$key})) {
+      # Set for a specific host/session combo
+      $precedence{$key} = $config->{hosts}{$chost}{$sess}{$key};
+    } elsif (defined($config->{hosts}{$chost}{$key})) {
+      # Set for a specific host
+      $precedence{$key} = $config->{hosts}{$chost}{$key};
+    } elsif (defined($config->{$key})) {
+      # Set globally in the config
+      $precedence{$key} = $config->{$key};
+    } else {
+      # Not defined anywhere, set our fall-back default
+      $precedence{$key} = $resolve{$key};
+    }
   }
 
-  # Determine which kill remote control policy takes precedence
-  if (defined($cli{killrc})) {
-    # set on the CLI
-    $killrc = $cli{killrc};
-  } elsif (defined($config->{hosts}{$chost}{$sess}{killrc})) {
-    # Set for a specific host/session combo
-    $killrc = $config->{hosts}{$chost}{$sess}{killrc};
-  } elsif (defined($config->{hosts}{$chost}{killrc})) {
-    # Set for a specific host
-    $killrc = $config->{hosts}{$chost}{killrc};
-  } elsif (defined($config->{killrc})) {
-    # Set globally in the config
-    $killrc = $config->{killrc};
-  }
+  $config->{detach}     = $precedence{detach};
+  $config->{killrc}     = $precedence{killrc};
+  $config->{pauserc}    = $precedence{pauserc};
+  $config->{reconnect}  = $precedence{reconnect};
+  $config->{closeas}    = $precedence{closeas};
+  $config->{background} = $precedence{background};
+  $config->{syslog}     = $precedence{syslog};
 
   # Make our temp directory and subdirectories
   mkdir $config->{temp} unless -d $config->{temp};
@@ -981,6 +1010,22 @@ sub ClientMap {
 
   if ($v) { print STDERR "ClientMap end\n"; }
   if ($v) { print Dumper( \%mapping ); }
+
+  if ($config->{closeas}) {
+    my $close = 1;
+    foreach my $win (keys %{ $mapping{windows} }){
+      next if (defined $mapping{windows}{$win}{ignored} and $mapping{windows}{$win}{ignored});
+      next if (defined $mapping{windows}{$win}{blacklisted} and $mapping{windows}{$win}{blacklisted});
+      next if (defined $mapping{clients}{$win});
+      
+      # We aren't done spawning windows, so don't exit yet
+      $close = 0;
+    }
+
+    if ($close) {
+      exit;
+    }
+  }
 }
 
 sub PauseSelf {
@@ -1029,9 +1074,17 @@ After connecting to a host and instance, detach any clients connected to the ses
 
 Enable verbose/debugging mode to print extra details.
 
-=item B<--rce|r>
+=item B<--killrc|k>
 
 After connecting to a remote host, kill the remote tmuxc instance monitoring our session.
+
+=item B<--reconnect|R>
+
+Reconnect to a remote host via SSH if the connection drops. This is enabled by default. This option overrides a host/session specific disable flag.
+
+=item B<--closeas|C>
+
+Exit the control daemon after spawning terminals for every window.
 
 =item B<--new|n>
 
