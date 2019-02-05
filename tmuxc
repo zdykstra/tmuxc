@@ -38,6 +38,7 @@ sub RofiLauncher;
 sub RofiMenu;
 sub PauseSelf;
 sub KillSelf;
+sub Log;
 
 
 # Add signal handlers, load our config on start
@@ -57,20 +58,21 @@ my (
 $configfile = join('/', ( $ENV{'HOME'}, qw(.tmuxc.conf) ) );
 $noclean    = 1;
 $v          = 0;
+$vv         = 0;
 $pause      = 0;
 
 GetOptions(
-  "config|c=s"    => \$configfile,
-  "session|s=s"   => \$cli{session},
   "host|h=s"      => \$cli{host},
-  "detach|d"      => \$cli{detach},
+  "session|s=s"   => \$cli{session},
   "background|b"  => \$cli{background},
+  "config|c=s"    => \$configfile,
+  "detach|d"      => \$cli{detach},
+  "verbose|v+"    => \$v,
   "killrc|k"      => \$cli{killrc},
   "pauserc|P"     => \$cli{pauserc},
   "reconnect|R"   => \$cli{reconnect},
   "closeas|C"     => \$cli{closeas},
   "syslog|S=s"    => \$cli{syslog},
-  "verbose|v+"    => \$v,
   "new|n"         => sub { LoadConfig; InjectCommand("new-window -d"); },
   "launcher|l"    => sub { LoadConfig; RofiLauncher; },
   "menu|m"        => sub { LoadConfig; RofiMenu; },
@@ -82,10 +84,18 @@ GetOptions(
 
 pod2usage( -verbose => 2 ) if $help;
 
+
 LoadConfig;
 
 if ($config->{syslog}) {
   openlog( $RealScript, "ndelay,pid", $config->{syslog});
+}
+
+if ($v > 1) {
+  $vv = 7;
+  $v = 6;
+} else {
+  $v = 6;
 }
 
 # Double forking is required to avoid zombie xterms
@@ -99,6 +109,8 @@ if ($config->{background}) {
   $fpid = fork;
   exit if $fpid;
 }
+
+$|++;
 
 # We're through the fire, allow cleaning up after ourselves
 $noclean = 0;
@@ -126,12 +138,12 @@ while (1) {
   # Remote host mode!
   # Check if we have a ControlMaster session, create it if not
   if (defined($host)) {
-    @cmd = buildCommand( undef, [ qq(ssh -O check -o ControlPath=$config->{temp}ssh/%C), $host ]);
+    @cmd = buildCommand( undef, [ qq(ssh -q -O check -o ControlPath=$config->{temp}ssh/%C), $host ]);
     qx(@cmd);
 
     # Master isn't running, start up a new ControlMaster
     if ( ( $? >> 8 ) != 0 ) {
-      if ($v) { print STDERR "ControlMaster for $host not running, creating one\n"; }
+      Log($vv, "ControlMaster for $host not running, creating one");
       @cmd = buildCommand( undef, [ qq(ssh),
         qq(-o ServerAliveInterval=3),
         qq(-o ServerAliveCountMax=2),
@@ -146,11 +158,15 @@ while (1) {
 
   # Tell the remote instance to kill itself
   if (($config->{killrc}) and ($host)) {
+    Log($vv, "Killing remote tmuxc instance");
+    Log($vv, \@cmd);
     my $control = join('-', qw(localhost), $config->{session});
     @cmd = buildCommand( $cli{host}, [ qw(tmuxc -h localhost -s), $config->{session}, qw(-e) ]);
     qx(@cmd);
   # Tell the remote instance to pause itself 
   } elsif (($config->{pauserc}) and ($host)) { 
+    Log($vv, "Pausing remote tmuxc instance");
+    Log($vv, \@cmd);
     my $control = join('-', qw(localhost), $config->{session});
     @cmd = buildCommand( $cli{host}, [ qw(tmuxc -h localhost -s), $config->{session}, qw(-p) ]);
     qx(@cmd);
@@ -166,14 +182,13 @@ while (1) {
     my $sess  = $config->{session};
     my $initialize = $config->{hosts}{$chost}{$sess}{initialize} || [ qw(tmux new-session -d -s), $sess ];
 
-    if ($v) { print STDERR "## Initializing session: $sess\n"; }
+    Log($v, "Initializing session: $sess");
 
     @cmd = buildCommand( $host, $initialize );
     qx(@cmd);
 
     if ( ( $? >> 8 ) != 0 ) {
-      if ($v) { print STDERR "## Session initilization failed, exiting\n"; }
-      die;
+      die "Session initilization failed, exiting";
     }
   }
 
@@ -182,7 +197,7 @@ while (1) {
   qx(@cmd);
 
   if ( ( $? >> 8 ) == 0 ) {
-    if ($v) { print STDERR "## Killing existing control session\n"; }
+    Log($vv, "Killing existing control session");
     @cmd = buildCommand( $host, [ qw(tmux kill-session -t), $config->{control}, ] );
     qx(@cmd);
   }
@@ -232,9 +247,9 @@ while (1) {
 
   # Install our USR1 handler to process anything in the FIFO
   $SIG{USR1} = sub {
-    if ($v) { print STDERR "Inside USR1 handler\n"; }
     my @commands = <CONTROL_FIFO>;
-    if ($v) { print Dumper @commands; }
+    Log($vv, "Processing commands in FIFO handler:");
+    Log($vv, \@commands);
     foreach my $line (@commands) {
       if ($pause) {
         next unless ($line =~ m/tmuxc PauseSelf/);
@@ -248,7 +263,7 @@ while (1) {
           # Execute a command directly with no required input
           $publicCommands{$1}->();
         } else {
-          print STDERR "Unknown command: $1\n";
+          Log($vv, "FIFO Handler: Unknown command $1");
         }
       } else {
         # everything else is assumed to be a raw tmux command
@@ -262,7 +277,7 @@ while (1) {
     next if $pause;
     next if $line =~ m/^\%output/;
     $line =~ s/\r\n/\n/g;
-    if ($v) { print STDERR "## $line"; }
+    Log($vv, "$line");
 
     # Trigger block capture mode
     if ( $line =~ m/^\%begin/ ) {
@@ -274,14 +289,14 @@ while (1) {
     if ( $line =~ m/^\%end/ ) {
       $blockCapture = 0;
       next unless defined($function);
-      if ($v) { print STDERR "## Captured $function block:\n"; }
+      Log($vv, "Captured $function block");
 
       my $cmd = $function;
       if ( exists( $commandParse{$cmd} ) ) {
         $commandParse{$cmd}->( \@block, $child_in );
       }
       else {
-        if ($v) { print STDERR "## No handler for $cmd\n"; }
+        Log($vv, "No handler for $cmd");
       }
       @block    = ();
       $function = undef;
@@ -303,28 +318,28 @@ while (1) {
       if ( exists $mapping{windows}{$1}{'pending'} ) {
 
         # This is removed only by spawnTerm
-        if ($v) { print STDERR "## Session pending for $1\n"; }
+        Log($vv, "Skipping window-add: Session pending for $1");
         next;
       }
       elsif ( defined $mapping{clients}{$1} ) {
-        if ($v) { print STDERR "## One or more clients attached to $1\n"; }
+        Log($vv, "Skipping window-add: One or more clients attached to $1");
         next;
       }
       elsif ( $mapping{windows}{$1}{'blacklisted'} ) {
 
         # When a window is added to a running session, we do not know the name of the window
         # blacklisting only works when initially connecting to a session
-        if ($v) { print STDERR "## Window name $1 is blacklisted\n"; }
+        Log($vv, "Skipping window-add: $1 is blacklisted");
         next;
       }
       elsif ( $mapping{windows}{$1}{ignore} ) {
-        if ($v) { print STDERR "## Ignore flag set for $1\n"; }
+        Log($vv, "Skipping window-add: Ignore flag set for $1");
         next;
       }
       else {
         $mapping{windows}{$1}{'pending'} = 1;
         print $child_in $commandText{'ListWindows'};
-        if ($v) { print STDERR "## WA: Spawning a terminal for $1\n"; }
+        Log($vv, "window-add: Spawning a terminal for $1");
         spawnTerm( $host, $sess, $1 );
         next;
       }
@@ -333,13 +348,14 @@ while (1) {
     # Update our internal knowledge of the window name
     # Currently not really useful ...
     if ( $line =~ m/^\%window-renamed\s(@\d+)\s(.*)/ ) {
+      Log($vv, "Running $commandText{'ListWindows'}");
       print $child_in $commandText{'ListWindows'};
       next;
     }
 
     # Update our client <> window map - two clients likely point to a single window
     if ( $line =~ m/^\%session-window-changed\s(\$\d+)\s(\@\d+)/ ) {
-      if ($v) { print STDERR "## " . $commandText{'ClientMap'}; }
+      Log($vv, "Running $commandText{'ClientMap'}");
       print $child_in $commandText{'ClientMap'};
       next;
     }
@@ -348,7 +364,7 @@ while (1) {
     # %client-session-changed /dev/pts/10 $163 penthe-global-session-1545894242-319412-45
     # This is probably a useless event to process
     if ( $line =~ m/^\%client-session-changed\s(.*)\s(\$\d+)\s([\w-]+)/ ) {
-      if ($v) { print STDERR "## " . $commandText{'ClientMap'}; }
+      Log($vv, "Running $commandText{'ClientMap'}");
       print $child_in $commandText{'ClientMap'};
       next;
     }
@@ -356,7 +372,7 @@ while (1) {
     # Produced when a client attaches or detaches
     # This is probably a useless event to process
     if ( $line =~ m/^%sessions-changed/ ) {
-      if ($v) { print STDERR "## " . $commandText{'ClientMap'}; }
+      Log($vv, "Running $commandText{'ClientMap'}");
       print $child_in $commandText{'ClientMap'};
       next;
     }
@@ -367,9 +383,7 @@ while (1) {
       next unless exists $mapping{clients}{$1};
       while ( @{ $mapping{clients}{$1} } ) {
         my $client = pop @{ $mapping{clients}{$1} };
-        if ($v) {
-          print STDERR "# Killing session $client, window $1 closed\n";
-        }
+        Log($vv, "Killing session $client, window $1 close");
         print $child_in $commandText{'KillClient'} . "$client\n";
       }
       delete $mapping{clients}{$1};
@@ -529,7 +543,8 @@ sub LoadConfig {
     'BulkDetach'  => \&BulkDetach,
     'ClientMap'   => \&ClientMap,
   );
-  if ($v) { print Dumper($config); }
+  Log($vv, "Run-time configuration");
+  Log($vv, \$config);
 }
 
 # Simple command dispatcher, InjectCommand picks/prompts for the session
@@ -677,7 +692,7 @@ sub RofiLauncher {
 sub InjectCommand {
   my $command = shift;
 
-  if ($v) { print STDERR "## InjectCommand: $command\n"; }
+  Log($vv, "InjectCommand: $command");
 
   my $instances = InstanceCheck;
 
@@ -754,7 +769,8 @@ sub InjectCommand {
   my $control = join( '', ( $config->{temp}, qw(control/), $session , ".control" ));
   my $pidfile = join( '', ( $config->{temp}, qw(pid/), $session , ".pid" ));
 
-  if ($v) { print STDERR "## My PID file is $pidfile\n"; }
+  Log($vv, "PID file is $pidfile");
+  Log($vv, "Control file is $control");
 
   my $pid;
   if ( -f $pidfile ) {
@@ -847,7 +863,8 @@ exec $tmux_command
 
   my @exec = @{ $config->{terminal} };
   push @exec, $script;
-  if ($v) { print STDERR Dumper(@exec); }
+  Log($vv, "Terminal spawn command");
+  Log($vv, \@exec);
   my $fpid = fork;
   if ( $fpid == 0 ) {
     exit 255 unless open STDIN,  '/dev/null';
@@ -867,16 +884,14 @@ exec $tmux_command
 # Return 1 if blacklisted, 0 if not
 sub checkIfBlacklisted {
   my $window = shift;
-  if ($v) {
-    print STDERR "Checking if $window is blacklisted on $config->{chost}\n";
-  }
+  Log($vv, "Checking if $window is blacklisted on $config->{chost}");
 
   my $chost = $config->{chost};
   my $sess  = $config->{session};
 
   if ( defined( $config->{hosts}{$chost}{$sess}{blacklist} ) ) {
     if ( grep { $_ eq $window } @{ $config->{hosts}{$chost}{$sess}{blacklist} } ) {
-      if ($v) { print STDERR "## Blacklisted window: $window\n"; }
+      Log($vv, "Blacklisted window: $window");
       return 1;
     }
   }
@@ -893,7 +908,8 @@ sub ListWindows {
     $mapping{windows}{$id}{'blacklisted'} =
       ( checkIfBlacklisted($name) ) ? 1 : 0;
   }
-  if ($v) { print Dumper( \%mapping ); }
+  Log($vv, "ListWindows end");
+  Log($vv, \%mapping);
 }
 
 # Detach all clients from all windows, leaving everything else running
@@ -902,8 +918,8 @@ sub BulkDetach {
   my $block    = shift;
   my $child_in = shift;
 
-  if ($v) { print STDERR "## BulkDetach start\n"; }
-  if ($v) { print Dumper( \%mapping ); }
+  Log($vv, "BulkDetach start"); 
+  Log($vv, \%mapping );
 
   for my $entry ( @{$block} ) {
     my ( $group, $sid, $name, $wid ) = split( ',', $entry );
@@ -914,7 +930,7 @@ sub BulkDetach {
     # Filter out our control session
     next if $config->{control} eq $name;
 
-    if ($v) { print STDERR "## Detaching session $sid\n"; }
+    Log($v, "Detaching terminal from $sid");
     print $child_in $commandText{'KillClient'} . "$sid\n";
   }
 }
@@ -924,8 +940,8 @@ sub BulkSpawn {
   my $block    = shift;
   my $child_in = shift;
 
-  if ($v) { print STDERR "## BulkSpawn start\n"; }
-  if ($v) { print Dumper( \%mapping ); }
+  Log($vv, "BulkSpawn start");
+  Log($vv, \%mapping);
 
   for my $entry ( @{$block} ) {
     my ( $group, $sid, $name, $wid ) = split( ',', $entry );
@@ -951,17 +967,15 @@ sub BulkSpawn {
     }
     else {
       unless ( checkIfBlacklisted( $mapping{windows}{$window}{name} ) ) {
-        if ($v) {
-          print STDERR "## BulkSpawn: Spawning a terminal for $window\n";
-        }
+        Log($v, "Spawning a terminal for $window"); 
         delete $mapping{clients}{$window};
         $mapping{windows}{$window}{'pending'} = 1;
         spawnTerm( $host, $config->{session}, $window );
       }
     }
   }
-  if ($v) { print STDERR "## BulkSpawn end\n"; }
-  if ($v) { print Dumper( \%mapping ); }
+  Log($vv, "BulkSpawn end");
+  Log($vv, \%mapping);
 }
 
 # Build a map of all windows and the clients viewing the window
@@ -972,8 +986,9 @@ sub ClientMap {
   my $child_in = shift;
   my $sess     = $config->{session};
   my @found_windows;
-  if ($v) { print STDERR "ClientMap start\n"; }
-  if ($v) { print Dumper( \%mapping ); }
+
+  Log($vv, "ClientMap start");
+  Log($vv, \%mapping );
 
   # Purge existing mappings
   my %previous = %mapping{clients};
@@ -1003,13 +1018,13 @@ sub ClientMap {
 
   foreach my $window ( keys %{ $previous{clients} } ) {
     unless ( defined( $mapping{clients}{$window} ) ) {
-      if ($v) { print STDERR "$window missing from new map, setting ignore flag\n"; }
+      Log($v, "Setting ignore flag for $window");
       $mapping{windows}{$window}{ignore} = 1;
     }
   }
 
-  if ($v) { print STDERR "ClientMap end\n"; }
-  if ($v) { print Dumper( \%mapping ); }
+  Log($vv, "ClientMap end");
+  Log($vv, \%mapping );
 
   if ($config->{closeas}) {
     my $close = 1;
@@ -1034,6 +1049,28 @@ sub PauseSelf {
 
 sub KillSelf {
   exit;
+}
+
+sub Log {
+  my $level = shift;
+  my $entry = shift;
+
+  unless (ref($entry)) {
+    chomp($entry);
+    if ($level == LOG_DEBUG) {
+      print STDERR "## $entry\n";
+      return;
+    } 
+    if ($level == LOG_INFO) {
+      print "$entry\n";
+      return;
+    }
+  } else {
+    if ($level == LOG_DEBUG) {
+      print STDERR Dumper($entry);
+      return;
+    }
+  }
 }
 
 __END__
