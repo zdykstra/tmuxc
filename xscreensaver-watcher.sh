@@ -3,8 +3,8 @@
 process() {
 while read input; do 
   case "$input" in
-    UNBLANK*) echo "tmuxc -p" ;; 
-    LOCK*) echo "tmuxc -p" ;; 
+    UNBLANK*) tmuxc -p ;; 
+    LOCK*) tmuxc -p ;; 
   esac
 done
 }
