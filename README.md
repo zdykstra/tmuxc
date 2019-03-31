@@ -135,3 +135,5 @@ The following configuration directives can be set at the session, host or global
 * `reconnect` - Attempt to reconnect to the remote host and re-open windows if SSH drops. This is useful for laptops that are suspended frequently.
 * `closeas` - After opening all windows found on startup, tmuxc will exit. So-called one-shot mode.
 * `background` - Automatically background tmuxc on startup, reparenting to pid 1.
+* `blacklist` - An array of window titles that should be skipped when windows are created.
+* `skipnw` - Do not launch a new terminal when a new window is created in tmux. 
