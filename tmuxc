@@ -403,7 +403,6 @@ while (1) {
     }
   }
   MAINEND:
-  $backoff = $backoff * 2;
   $passcount = 1;
   exit unless ( ( $config->{reconnect} ) or not ( $config->{exitlast} ) );
 }
