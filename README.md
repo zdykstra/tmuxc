@@ -137,3 +137,4 @@ The following configuration directives can be set at the session, host or global
 * `background` - Automatically background tmuxc on startup, reparenting to pid 1.
 * `blacklist` - An array of window titles that should be skipped when windows are created.
 * `skipnw` - Do not launch a new terminal when a new window is created in tmux. 
+* `exitlast` - Exit the control daemon after the last tmux window in the session exits.
