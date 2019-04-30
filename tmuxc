@@ -45,12 +45,13 @@ sub Log;
 BEGIN {
   $SIG{TERM}  = \&CleanExit; 
   $SIG{HUP}   = \&LoadConfig;
+  $SIG{PIPE}  = sub {};
 }
 
 my (
   $config,  $configfile,   $pause,
   $v,       $vv,           $noclean,
-  $host,    $help,
+  $host,    $help,         $passcount,
   %publicCommands,
   %cli, %mapping, %commandParse, %commandText
 );
@@ -60,6 +61,7 @@ $noclean    = 1;
 $v          = 0;
 $vv         = 0;
 $pause      = 0;
+$passcount  = 0;
 
 GetOptions(
   "host|h=s"      => \$cli{host},
@@ -73,6 +75,7 @@ GetOptions(
   "reconnect|R"   => \$cli{reconnect},
   "closeas|C"     => \$cli{closeas},
   "syslog|S=s"    => \$cli{syslog},
+  "exitlast|E"    => \$cli{exitlast},
   "new|n"         => sub { LoadConfig; InjectCommand("new-window -d"); },
   "launcher|l"    => sub { LoadConfig; RofiLauncher; },
   "menu|m"        => sub { LoadConfig; RofiMenu; },
@@ -110,6 +113,7 @@ if ($config->{background}) {
 }
 
 $|++;
+close STDERR;
 
 # We're through the fire, allow cleaning up after ourselves
 $noclean = 0;
@@ -177,6 +181,9 @@ while (1) {
 
   # If the session doesn't exist, use the user-defined method if it exists, else make a new empty one
   if ( ( $? >> 8 ) != 0 ) {
+    # Second time through the loop and our session doesn't exist, so exit instead of creating a new session
+    last if ( ( $config->{exitlast} ) and ( $passcount ) );
+
     my $chost = $config->{chost};
     my $sess  = $config->{session};
     my $initialize = $config->{hosts}{$chost}{$sess}{initialize} || [ qw(tmux new-session -d -s), $sess ];
@@ -187,7 +194,10 @@ while (1) {
     qx(@cmd);
 
     if ( ( $? >> 8 ) != 0 ) {
-      die "Session initilization failed, exiting";
+      die "Session initilization failed, exiting" unless ( $config->{reconnect} );
+      Log($v, "Retrying connection in 2 seconds");
+      sleep 2;
+      goto MAINEND;
     }
   }
 
@@ -392,7 +402,10 @@ while (1) {
 
     }
   }
-  exit unless ($config->{reconnect});
+  MAINEND:
+  $backoff = $backoff * 2;
+  $passcount = 1;
+  exit unless ( ( $config->{reconnect} ) or not ( $config->{exitlast} ) );
 }
 
 END {
@@ -473,6 +486,7 @@ sub LoadConfig {
     "closeas"     => 0,
     "background"  => 0,
     "syslog"      => 0,
+    "exitlast"    => 0,
   );
 
   foreach my $key (keys %resolve) {
@@ -501,6 +515,7 @@ sub LoadConfig {
   $config->{closeas}    = $precedence{closeas};
   $config->{background} = $precedence{background};
   $config->{syslog}     = $precedence{syslog};
+  $config->{exitlast}   = $precedence{exitlast};
 
   # Make our temp directory and subdirectories
   mkdir $config->{temp} unless -d $config->{temp};
@@ -1121,6 +1136,10 @@ Reconnect to a remote host via SSH if the connection drops. This is enabled by d
 =item B<--closeas|C>
 
 Exit the control daemon after spawning terminals for every window.
+
+=item B<--exitlast|E>
+
+Exit the control daemon after the last windown in the tmux session is closed.
 
 =item B<--new|n>
 
