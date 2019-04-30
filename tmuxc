@@ -4,7 +4,7 @@ use strict;
 use warnings;
 
 use Time::HiRes;
-use Getopt::Long;
+use Getopt::Long qw(:config no_ignore_case);
 use Sys::Hostname;
 use IPC::Open2;
 use Time::HiRes qw( gettimeofday );
@@ -84,18 +84,17 @@ GetOptions(
 
 pod2usage( -verbose => 2 ) if $help;
 
-
-LoadConfig;
-
-if ($config->{syslog}) {
-  openlog( $RealScript, "ndelay,pid", $config->{syslog});
-}
-
 if ($v > 1) {
   $vv = 7;
   $v = 6;
 } else {
   $v = 6;
+}
+
+LoadConfig;
+
+if ($config->{syslog}) {
+  openlog( $RealScript, "ndelay,pid", $config->{syslog});
 }
 
 # Double forking is required to avoid zombie xterms
