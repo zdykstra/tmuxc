@@ -156,6 +156,14 @@ while (1) {
         qq(-f -N),
         $host ] );
       qx(@cmd);
+
+      if ( ( $? >> 8 ) != 0 ) {
+        Log($v, "Retrying connection in 2 seconds");
+        sleep 2;
+        if ( $config->{reconnect} ) {
+          goto MAINEND;
+        }
+      }
     }
   }
 
@@ -194,10 +202,7 @@ while (1) {
     qx(@cmd);
 
     if ( ( $? >> 8 ) != 0 ) {
-      die "Session initilization failed, exiting" unless ( $config->{reconnect} );
-      Log($v, "Retrying connection in 2 seconds");
-      sleep 2;
-      goto MAINEND;
+      die "Session initilization failed, exiting";
     }
   }
 
