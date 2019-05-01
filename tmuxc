@@ -446,7 +446,6 @@ sub LoadConfig {
     $config = do($configfile) or die $!;
   }
   else {
-    $config->{terminal} = [ qw(xterm) ];
     $config->{temp}     = join('/', ( $ENV{'HOME'}, qw(.tmuxc) ));
   }
 
@@ -491,6 +490,7 @@ sub LoadConfig {
     "background"  => 0,
     "syslog"      => 0,
     "exitlast"    => 0,
+    "terminal"    => [ qw(xterm) ],
   );
 
   foreach my $key (keys %resolve) {
@@ -520,6 +520,7 @@ sub LoadConfig {
   $config->{background} = $precedence{background};
   $config->{syslog}     = $precedence{syslog};
   $config->{exitlast}   = $precedence{exitlast};
+  $config->{terminal}   = $precedence{terminal};
 
   # Make our temp directory and subdirectories
   mkdir $config->{temp} unless -d $config->{temp};
