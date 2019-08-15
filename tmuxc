@@ -141,18 +141,24 @@ while (1) {
   # Remote host mode!
   # Check if we have a ControlMaster session, create it if not
   if (defined($host)) {
-    @cmd = buildCommand( undef, [ qq(ssh -q -O check -o ControlPath=$config->{temp}ssh/%C 2>/dev/null), $host ]);
+    @cmd = buildCommand( undef, [
+        qq(ssh -q -O check),
+        qq(-o ConnectTimeout=$config->{conn_timeout}),
+        qq(-o ControlPath=$config->{temp}ssh/%C 2>/dev/null),
+        $host ]);
     qx(@cmd);
 
     # Master isn't running, start up a new ControlMaster
     if ( ( $? >> 8 ) != 0 ) {
       Log($vv, "ControlMaster for $host not running, creating one");
       @cmd = buildCommand( undef, [ qq(ssh),
-        qq(-o ServerAliveInterval=3),
-        qq(-o ServerAliveCountMax=2),
-        qq(-o ControlMaster=yes),
-        qq(-o ControlPersist=10m),
+        qq(-o ConnectTimeout=$config->{conn_timeout}),
+        qq(-o ServerAliveInterval=$config->{alive_interval}),
+        qq(-o ServerAliveCountMax=$config->{alive_count}),
+        qq(-o ControlPersist=$config->{persist}),
         qq(-o ControlPath=$config->{temp}ssh/%C),
+        qq(-o ControlMaster=yes),
+        qq(@{ $config->{ssh_args} }),
         qq(-f -N),
         $host ] );
       qx(@cmd);
@@ -482,15 +488,20 @@ sub LoadConfig {
   my %precedence;
 
   my %resolve = ( 
-    "detach"      => 0,
-    "killrc"      => 0,
-    "pauserc"     => 0,
-    "reconnect"   => 1,
-    "closeas"     => 0,
-    "background"  => 0,
-    "syslog"      => 0,
-    "exitlast"    => 0,
-    "terminal"    => [ qw(xterm) ],
+    "detach"          => 0,
+    "killrc"          => 0,
+    "pauserc"         => 0,
+    "reconnect"       => 1,
+    "closeas"         => 0,
+    "background"      => 0,
+    "syslog"          => 0,
+    "exitlast"        => 0,
+    "terminal"        => [ qw(xterm) ],
+    "ssh_args"        => [ qw() ],
+    "alive_interval"  => 3,
+    "alive_count"     => 2,
+    "conn_timeout"    => 3,
+    "persist"         => "10s",
   );
 
   foreach my $key (keys %resolve) {
@@ -510,17 +521,9 @@ sub LoadConfig {
       # Not defined anywhere, set our fall-back default
       $precedence{$key} = $resolve{$key};
     }
+    # Set the key/value in th config hash
+    $config->{$key} = $precedence{$key};
   }
-
-  $config->{detach}     = $precedence{detach};
-  $config->{killrc}     = $precedence{killrc};
-  $config->{pauserc}    = $precedence{pauserc};
-  $config->{reconnect}  = $precedence{reconnect};
-  $config->{closeas}    = $precedence{closeas};
-  $config->{background} = $precedence{background};
-  $config->{syslog}     = $precedence{syslog};
-  $config->{exitlast}   = $precedence{exitlast};
-  $config->{terminal}   = $precedence{terminal};
 
   # Make our temp directory and subdirectories
   mkdir $config->{temp} unless -d $config->{temp};
@@ -835,7 +838,7 @@ sub buildCommandRefArray {
 
   if ($remote) {
     my $cpath = join('', $config->{temp}, qw(ssh/%C) );
-    return [ qw(ssh -q -t -S), $cpath, $remote, shellQuote(@_) ];
+    return [ qw(ssh -q -t), qq(@{ $config->{ssh_args} }), qw(-S), $cpath, $remote, shellQuote(@_) ];
   }
 
   return @_;
@@ -861,18 +864,27 @@ sub spawnTerm {
       $session,
       qw(-s),
       $clone_session,
-      qw(\; set-option destroy-unattached \; attach-session -t),
-      $clone_session,
-      qw(\; select-window -t),
-      $window
     ]
   );
-  my $tmux_command = join( ' ', @cmd );
+  my $clone_command = join( ' ', @cmd );
+
+  @cmd = buildCommand(
+    $host,
+    [
+      qw(tmux attach-session -t),
+      $clone_session,
+      qw(\; set-option destroy-unattached on),
+      qw(\; select-window -t),
+      $window,
+    ]
+  );
+  my $attach_command = join( ' ', @cmd );
 
   my $script       = join( '', ( $config->{temp}, $clone_session));
   my $start_script = qq|#!/bin/sh
-test -f $script && rm $script 
-exec $tmux_command
+test -f $script && rm $script
+$clone_command
+exec $attach_command
 |;
 
   open SCRIPT, '>', $script;
