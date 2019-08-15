@@ -14,12 +14,6 @@ bind-key c new-window -d
 
 # Break the current pane out into a new window, without focus. There is no tmuxc shortcut for this action.
 bind b breakp -d
-
-# This ensures that when you exit a shell / close a window, the terminal viewing that window does not refocus to another window
-set-option -g detach-on-destroy on
-
-# Ensure that when a program exits (e.g. your shell), the window is destroyed which results in the terminal correctly closing
-set-option -g remain-on-exit off
 ```
 
 Example ~/.tmuxc.conf for a local tmux instance
