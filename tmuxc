@@ -502,6 +502,7 @@ sub LoadConfig {
     "alive_count"     => 2,
     "conn_timeout"    => 3,
     "persist"         => "10s",
+    "selector"        => [ qw(rofi -dmenu -format i) ],
   );
 
   foreach my $key (keys %resolve) {
@@ -540,10 +541,10 @@ sub LoadConfig {
   $config->{control} = join( '', ( $config->{hostname}, qw(-), $config->{session}, qw(-control) ) );
 
   # Define our command fifo
-  $config->{command} = join( '', ( $config->{temp}, qw(control/), $config->{chost}, qw(-), $config->{session}, qw(.control) ));
+  $config->{command} = join( '', ( $config->{temp}, qw(control/), $config->{session}, qw(@), $config->{chost}, qw(.control) ));
 
   # Define our PID file
-  $config->{pidfile} = join( '', ( $config->{temp}, qw(pid/), $config->{chost}, qw(-), $config->{session}, qw(.pid) ));
+  $config->{pidfile} = join( '', ( $config->{temp}, qw(pid/), $config->{session}, qw(@), $config->{chost}, qw(.pid) ));
 
   %publicCommands = (
     'KillSelf'    => \&KillSelf,
@@ -598,10 +599,10 @@ sub InstanceCheck {
   my ( @check, $instances );
   foreach my $host ( sort keys %{ $config->{hosts} } ) {
     foreach my $session ( sort keys %{ $config->{hosts}{$host} } ) {
-      push @check, "$host-$session";
+      push @check, "$session\@$host";
     }
   }
- 
+
   # Check each instance defined in config file
   for my $session (@check) {
     my $control = join( '', ( $config->{temp}, qw(control/), $session , ".control" ));
@@ -651,6 +652,7 @@ sub InstanceCheck {
       }
     }
   }
+  print Dumper($instances);
   return $instances;
 }
 
@@ -666,10 +668,10 @@ sub RofiLauncher {
 
   my $response;
   if ( scalar(@dead) > 0 ) {
-    my $pid = open2( $child_out, $child_in, "rofi -dmenu -format i" );
+    my $pid = open2( $child_out, $child_in, @{ $config->{selector} } );
     for (@dead) {
-      my ( $host, $sess ) = split( '-', $_, 2 );
-      print $child_in "$host - $sess\n";
+      my ( $sess, $host ) = split( '@', $_, 2 );
+      print $child_in "$sess\@$host\n";
     }
     close($child_in);
     $response = <$child_out>;
@@ -680,7 +682,7 @@ sub RofiLauncher {
   exit unless defined($response);
   chomp($response);
 
-  my ( $host, $sess ) = split( /-/, $dead[$response], 2 );
+  my ( $sess, $host ) = split( /@/, $dead[$response], 2 );
   my $myself = join( '/', ( $RealBin, $RealScript ) );
   my $cmd;
   if ( $host eq "localhost" ) {
@@ -728,7 +730,7 @@ sub InjectCommand {
 
   # An exact host and session were provided
   if ($cli{host} and $cli{session}) {
-    my $session = join( '', $cli{host}, qw(-), $cli{session} );
+    my $session = join( '', $cli{session}, qw(@), $cli{host} );
     if ( grep { $_ eq $session } @sessions ) {
       push @sessmenu, $session;
     }
@@ -757,7 +759,7 @@ sub InjectCommand {
     and (not defined($cli{session}))) {
     my @clean;
     for (@sessmenu) {
-      my ( $host, $sess ) = split( '-', $_, 2 );
+      my ( $sess, $host ) = split( '@', $_, 2 );
       unless ($config->{hosts}{$host}{$sess}{skipnw}) {
         push @clean, $_;
       }
@@ -772,8 +774,8 @@ sub InjectCommand {
     my $pid = open2( $child_out, $child_in, "rofi -dmenu -format i" );
 
     for (@sessmenu) {
-      my ( $host, $sess ) = split( '-', $_, 2 );
-      print $child_in "$host - $sess\n";
+      my ( $sess, $host ) = split( '@', $_, 2 );
+      print $child_in "$sess\@$host\n";
     }
     close($child_in);
 
@@ -838,7 +840,9 @@ sub buildCommandRefArray {
 
   if ($remote) {
     my $cpath = join('', $config->{temp}, qw(ssh/%C) );
-    return [ qw(ssh -q -t), qq(@{ $config->{ssh_args} }), qw(-S), $cpath, $remote, shellQuote(@_) ];
+    my $cmd = [ qw(ssh -q -t), qq(@{ $config->{ssh_args} }), qw(-S), $cpath, $remote, shellQuote(@_) ];
+    my @sane = grep { $_ ne '' } @$cmd;
+    return \@sane;
   }
 
   return @_;
