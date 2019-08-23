@@ -502,7 +502,7 @@ sub LoadConfig {
     "alive_count"     => 2,
     "conn_timeout"    => 3,
     "persist"         => "10s",
-    "selector"        => [ qw(rofi -dmenu -format i) ],
+    "selector"        => [ qw(rofi -dmenu -i) ],
   );
 
   foreach my $key (keys %resolve) {
@@ -580,7 +580,7 @@ sub RofiMenu {
   );
 
   my ( $child_out, $child_in );
-  my $pid = open2( $child_out, $child_in, "rofi -dmenu -i" );
+  my $pid = open2( $child_out, $child_in, @{ $config->{selector} } );
 
   foreach my $item ( sort keys %menu ) {
     print $child_in "$item\n";
@@ -652,7 +652,6 @@ sub InstanceCheck {
       }
     }
   }
-  print Dumper($instances);
   return $instances;
 }
 
@@ -682,7 +681,7 @@ sub RofiLauncher {
   exit unless defined($response);
   chomp($response);
 
-  my ( $sess, $host ) = split( /@/, $dead[$response], 2 );
+  my ( $sess, $host ) = split( /@/, $response, 2 );
   my $myself = join( '/', ( $RealBin, $RealScript ) );
   my $cmd;
   if ( $host eq "localhost" ) {
@@ -771,7 +770,7 @@ sub InjectCommand {
   my ( $response, $session );
   if ( scalar(@sessmenu) > 1 ) {
     my ( $child_out, $child_in );
-    my $pid = open2( $child_out, $child_in, "rofi -dmenu -format i" );
+    my $pid = open2( $child_out, $child_in, @{ $config->{selector} } );
 
     for (@sessmenu) {
       my ( $sess, $host ) = split( '@', $_, 2 );
@@ -779,10 +778,9 @@ sub InjectCommand {
     }
     close($child_in);
 
-    $response = <$child_out>;
-    exit unless defined($response);
-    chomp($response);
-    $session = $sessmenu[$response];
+    $session = <$child_out>;
+    exit unless defined($session);
+    chomp($session);
   } elsif ( scalar(@sessmenu) == 1) {
     $session = shift @sessmenu;
   } else {
