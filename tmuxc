@@ -710,7 +710,6 @@ sub Launcher {
 
 # If there's only one control session, inject a command into that FIFO
 # If there are multiple, prompt via rofi
-# TODO: Decouple this from rofi somehow ?
 
 sub InjectCommand {
   my $command = shift;
@@ -833,23 +832,18 @@ sub shellQuote {
   return join '|', @return;
 }
 
-sub buildCommandRefArray {
-  my $remote = shift;
 
-  if ($remote) {
-    my $cpath = join('', $config->{temp}, qw(ssh/%C) );
-    my $cmd = [ qw(ssh -q -t), qq(@{ $config->{ssh_args} }), qw(-S), $cpath, $remote, shellQuote(@_) ];
-    my @sane = grep { $_ ne '' } @$cmd;
-    return \@sane;
-  }
-
-  return @_;
-}
-
+# Wraps a given command with SSH when a remote host is defined
 sub buildCommand {
-  my @list = buildCommandRefArray(@_);
+  my $remote = shift;
+  return @{ $_[0] } unless $remote;
 
-  return @{ $list[0] };
+  my $cpath = join('', $config->{temp}, qw(ssh/%C) );
+  my @cmd =
+    grep { length }
+    qw(ssh -q -t), @{ $config->{ssh_args} }, qw(-S), $cpath, $remote, shellQuote(@_);
+
+  return @cmd;
 }
 
 # Write out a custom shell script and launch it with our terminal
