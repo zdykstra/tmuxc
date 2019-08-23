@@ -34,8 +34,8 @@ sub BulkSpawn;
 sub ClientMap;
 sub CleanExit;
 sub InstanceCheck;
-sub RofiLauncher;
-sub RofiMenu;
+sub Launcher;
+sub Menu;
 sub PauseSelf;
 sub KillSelf;
 sub Log;
@@ -77,8 +77,8 @@ GetOptions(
   "syslog|S=s"    => \$cli{syslog},
   "exitlast|E"    => \$cli{exitlast},
   "new|n"         => sub { LoadConfig; InjectCommand("new-window -d"); },
-  "launcher|l"    => sub { LoadConfig; RofiLauncher; },
-  "menu|m"        => sub { LoadConfig; RofiMenu; },
+  "launcher|l"    => sub { LoadConfig; Launcher; },
+  "menu|m"        => sub { LoadConfig; Menu; },
   "exit|e"        => sub { LoadConfig; InjectCommand("tmuxc KillSelf"); },
   "pause|p"       => sub { LoadConfig; InjectCommand("tmuxc PauseSelf"); },
   "raw|r=s"       => sub { my (undef, $cmd) = @_; LoadConfig; InjectCommand($cmd); },
@@ -571,7 +571,7 @@ sub LoadConfig {
 }
 
 # Simple command dispatcher, InjectCommand picks/prompts for the session
-sub RofiMenu {
+sub Menu {
   my %menu = (
     'Create New Window'      => 'new-window -d',
     'Detach Session Windows' => 'tmuxc BulkDetach',
@@ -656,7 +656,7 @@ sub InstanceCheck {
 }
 
 # Determine which control sessions are running, prompt for anything else
-sub RofiLauncher {
+sub Launcher {
   my ( @dead, $child_out, $child_in );
 
   my $instances = InstanceCheck;
