@@ -43,6 +43,7 @@ sub Log;
 
 # Add signal handlers, load our config on start
 BEGIN {
+  $SIG{INT}   = \&CleanExit;
   $SIG{TERM}  = \&CleanExit; 
   $SIG{HUP}   = \&LoadConfig;
   $SIG{PIPE}  = sub {};
@@ -121,7 +122,7 @@ if ( -f $config->{pidfile} ) {
   close PID;
   if ( kill( 0, $pid ) ) {
     Log(LOG_DEBUG, "$config->{pidfile} exists, and is running");
-    die "$config->{pidfile} exists, and is running\n";
+    die "$config->{pidfile} exists, and pid $pid is running\n";
   }
 }
 
@@ -422,9 +423,13 @@ while (1) {
 
 END {
   exit if $noclean;
+  CleanExit;
+}
 
+sub CleanExit {
   unlink $config->{command};
   unlink $config->{pidfile};
+  exit;
 }
 
 # Load our default config file / user defined
