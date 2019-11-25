@@ -52,7 +52,7 @@ my (
   $config,  $configfile,   $pause,
   $v,       $vv,           $noclean,
   $host,    $help,         $passcount,
-  %publicCommands,
+  %publicCommands, %defaultOptions,
   %cli, %mapping, %commandParse, %commandText
 );
 
@@ -489,7 +489,7 @@ sub LoadConfig {
   my $sess = $config->{session};
   my %precedence;
 
-  my %resolve = ( 
+  %defaultOptions = (
     "detach"          => 0,
     "killrc"          => 0,
     "pauserc"         => 0,
@@ -508,7 +508,7 @@ sub LoadConfig {
     "tmux_bin"        => "tmux",
   );
 
-  foreach my $key (keys %resolve) {
+  foreach my $key (keys %defaultOptions) {
     if (defined($cli{$key})) {
       # set on the CLI
       $precedence{$key} = $cli{$key};
@@ -523,7 +523,7 @@ sub LoadConfig {
       $precedence{$key} = $config->{$key};
     } else {
       # Not defined anywhere, set our fall-back default
-      $precedence{$key} = $resolve{$key};
+      $precedence{$key} = $defaultOptions{$key};
     }
     # Set the key/value in the config hash
     $config->{$key} = $precedence{$key};
@@ -602,6 +602,8 @@ sub InstanceCheck {
   my ( @check, $instances );
   foreach my $host ( sort keys %{ $config->{hosts} } ) {
     foreach my $session ( sort keys %{ $config->{hosts}{$host} } ) {
+      # Skip if this is an option name / reserved word
+      next if defined($defaultOptions{$session});
       push @check, "$session\@$host";
     }
   }
@@ -856,7 +858,7 @@ sub spawnTerm {
   my ( $sec, $usec ) = gettimeofday();
   my $clone_session = $config->{hostname} . "-$session-$sec-$usec-$id";
 
-  @cmd = buildCommand(
+  my @cmd = buildCommand(
     $host,
     [
       $config->{tmux_bin},
