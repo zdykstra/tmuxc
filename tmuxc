@@ -632,12 +632,11 @@ sub InstanceCheck {
   my @controls  = glob($cglob);
 
 
-  for (@controls) {
-    my $filename = basename($_);
+  for my $control (@controls) {
+    my $filename = basename($control);
     $filename =~ s/\.control//;
-    #my ( $host, $sess ) = split( '-', $filename, 2 );
 
-    my $pidfile = $_;
+    my $pidfile = $control;
     $pidfile =~ s/control/pid/g;
 
     if ( -f $pidfile ) {
@@ -651,10 +650,14 @@ sub InstanceCheck {
           push @{ $instances->{running} }, $filename;
         }
       } else {
-        unless ( grep { $_ eq $filename } @{ $instances->{dead} } ) {
-          push @{ $instances->{dead} }, $filename;
-        }
+        # If the pid isn't running, this is a one-off session that somehow lingered on
+        # Remove the pidfile and the control socket
+        unlink $pidfile;
+        unlink $control;
       }
+    } else {
+      # No pidfile associated with this control socket, purge it
+      unlink $control;
     }
   }
   return $instances;
@@ -836,7 +839,6 @@ sub shellQuote {
 
   return join '|', @return;
 }
-
 
 # Wraps a given command with SSH when a remote host is defined
 sub buildCommand {
