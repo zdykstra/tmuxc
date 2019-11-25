@@ -449,6 +449,25 @@ sub CleanExit {
 sub LoadConfig {
   undef $config;
 
+  %defaultOptions = (
+    "detach"          => 0,
+    "killrc"          => 0,
+    "pauserc"         => 0,
+    "reconnect"       => 1,
+    "closeas"         => 0,
+    "background"      => 0,
+    "syslog"          => 0,
+    "exitlast"        => 0,
+    "terminal"        => [ qw(xterm) ],
+    "ssh_args"        => [ qw() ],
+    "alive_interval"  => 3,
+    "alive_count"     => 2,
+    "conn_timeout"    => 3,
+    "persist"         => "10s",
+    "selector"        => [ qw(rofi -dmenu -i) ],
+    "tmux_bin"        => "tmux",
+  );
+
   # Read in the config file
   if ( -e $configfile ) {
     $config = do($configfile) or die $!;
@@ -475,39 +494,21 @@ sub LoadConfig {
     # Set on the command line
     $config->{session} = $cli{session};
   } elsif ( defined( $config->{hosts}{$chost} ) ) {
-    # Pick the first session under this host, sorted
-    my ($ss) = sort keys %{ $config->{hosts}{$chost} };
-    $config->{session} = $ss;
+    # Pick the first session under this host, sorted, that is not a config key
+    foreach my $key (sort keys %{ $config->{hosts}{$chost} } ) {
+      next if defined($defaultOptions{$key});
+      $config->{session} = $key;
+    }
   } elsif ( not defined( $config->{session} ) ) {
     # Not set at all in the config file, set a default
     $config->{session} = "global-session";
   }
   
-  # Look up a number of keys that can be set at different levels
-  # If no value can be found, use a sane default
-
   my $sess = $config->{session};
   my %precedence;
 
-  %defaultOptions = (
-    "detach"          => 0,
-    "killrc"          => 0,
-    "pauserc"         => 0,
-    "reconnect"       => 1,
-    "closeas"         => 0,
-    "background"      => 0,
-    "syslog"          => 0,
-    "exitlast"        => 0,
-    "terminal"        => [ qw(xterm) ],
-    "ssh_args"        => [ qw() ],
-    "alive_interval"  => 3,
-    "alive_count"     => 2,
-    "conn_timeout"    => 3,
-    "persist"         => "10s",
-    "selector"        => [ qw(rofi -dmenu -i) ],
-    "tmux_bin"        => "tmux",
-  );
-
+  # Look up a number of keys that can be set at different levels
+  # If no value can be found, use a sane default
   foreach my $key (keys %defaultOptions) {
     if (defined($cli{$key})) {
       # set on the CLI
