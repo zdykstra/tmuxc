@@ -190,7 +190,7 @@ while (1) {
   }
 
   # Check if session exists
-  @cmd = buildCommand( $host, [ qw(tmux has-session -t), $config->{session}, ] );
+  @cmd = buildCommand( $host, [ $config->{tmux_bin}, qw(has-session -t), $config->{session}, ] );
   qx(@cmd);
 
   # If the session doesn't exist, use the user-defined method if it exists, else make a new empty one
@@ -200,7 +200,7 @@ while (1) {
 
     my $chost = $config->{chost};
     my $sess  = $config->{session};
-    my $initialize = $config->{hosts}{$chost}{$sess}{initialize} || [ qw(tmux new-session -d -s), $sess ];
+    my $initialize = $config->{hosts}{$chost}{$sess}{initialize} || [ $config->{tmux_bin}, qw(new-session -d -s), $sess ];
 
     Log($v, "Initializing session: $sess");
 
@@ -213,12 +213,12 @@ while (1) {
   }
 
   # Check if control session exists
-  @cmd = buildCommand( $host, [ qw(tmux has-session -t), $config->{control}, ] );
+  @cmd = buildCommand( $host, [ $config->{tmux_bin}, qw(has-session -t), $config->{control}, ] );
   qx(@cmd);
 
   if ( ( $? >> 8 ) == 0 ) {
     Log($vv, "Killing existing control session");
-    @cmd = buildCommand( $host, [ qw(tmux kill-session -t), $config->{control}, ] );
+    @cmd = buildCommand( $host, [ $config->{tmux_bin}, qw(kill-session -t), $config->{control}, ] );
     qx(@cmd);
   }
 
@@ -226,14 +226,16 @@ while (1) {
   @cmd = buildCommand(
     $host,
     [
-      qw(tmux new-session -d -t), $config->{session},
-      qw(-s),                     $config->{control},
+      $config->{tmux_bin},
+      qw(new-session -d -t), $config->{session},
+      qw(-s),                $config->{control},
     ]
   );
+
   qx(@cmd);
 
   # Attach to control session in control mode
-  @cmd = buildCommand( $host, [ qw(tmux -C attach-session -t), $config->{control}, ] );
+  @cmd = buildCommand( $host, [ $config->{tmux_bin}, qw(-C attach-session -t), $config->{control}, ] );
 
   my $sess = $config->{session};
   my ( $pid, $child_out, $child_in );
@@ -503,6 +505,7 @@ sub LoadConfig {
     "conn_timeout"    => 3,
     "persist"         => "10s",
     "selector"        => [ qw(rofi -dmenu -i) ],
+    "tmux_bin"        => "tmux",
   );
 
   foreach my $key (keys %resolve) {
@@ -522,7 +525,7 @@ sub LoadConfig {
       # Not defined anywhere, set our fall-back default
       $precedence{$key} = $resolve{$key};
     }
-    # Set the key/value in th config hash
+    # Set the key/value in the config hash
     $config->{$key} = $precedence{$key};
   }
 
@@ -853,10 +856,11 @@ sub spawnTerm {
   my ( $sec, $usec ) = gettimeofday();
   my $clone_session = $config->{hostname} . "-$session-$sec-$usec-$id";
 
-  my @cmd = buildCommand(
+  @cmd = buildCommand(
     $host,
     [
-      qw(tmux new-session -d -t),
+      $config->{tmux_bin},
+      qw(new-session -d -t),
       $session,
       qw(-s),
       $clone_session,
@@ -867,7 +871,8 @@ sub spawnTerm {
   @cmd = buildCommand(
     $host,
     [
-      qw(tmux attach-session -t),
+      $config->{tmux_bin},
+      qw(attach-session -t),
       $clone_session,
       qw(\; set-option destroy-unattached on),
       qw(\; select-window -t),
