@@ -92,6 +92,17 @@ pod2usage( -verbose => 2 ) if $help;
 
 LoadConfig;
 
+# Check if an instance for this specific host and session is running
+if ( -f $config->{pidfile} ) {
+  open PID, '<', $config->{pidfile};
+  my $pid = <PID>;
+  close PID;
+  if ( kill( 0, $pid ) ) {
+    Log(LOG_DEBUG, "$config->{pidfile} exists, and is running");
+    die "$config->{pidfile} exists, and pid $pid is running\n";
+  }
+}
+
 # Double fork
 if ($config->{background}) {
   my $fpid = fork;
@@ -115,17 +126,6 @@ if ($config->{log_level} == LOG_NOTICE) {
 
 $|++;
 
-# Check if an instance for this specific host and session is running
-if ( -f $config->{pidfile} ) {
-  open PID, '<', $config->{pidfile};
-  my $pid = <PID>;
-  close PID;
-  if ( kill( 0, $pid ) ) {
-    Log(LOG_DEBUG, "$config->{pidfile} exists, and is running");
-    die "$config->{pidfile} exists, and pid $pid is running\n";
-  }
-}
-
 # Write our PID to a file, regardless of fg or bg state
 open PID, '>', $config->{pidfile};
 print PID $$;
@@ -133,6 +133,8 @@ close PID;
 
 # Disable the noclean flag, now that we've written a PID to disk
 $noclean = 0;
+
+Log(LOG_NOTICE, "tmuxc running as PID $$");
 
 while (1) {
 
@@ -422,11 +424,15 @@ while (1) {
 }
 
 END {
+  Log(LOG_DEBUG, "END reached in $$");
   exit if $noclean;
   CleanExit;
 }
 
 sub CleanExit {
+  Log(LOG_DEBUG, "END reached in $$");
+  exit if $noclean;
+
   unlink $config->{command};
   unlink $config->{pidfile};
   exit;
@@ -559,6 +565,7 @@ sub LoadConfig {
     'BulkDetach'  => \&BulkDetach,
     'ClientMap'   => \&ClientMap,
   );
+
   Log(LOG_DEBUG, "Run-time configuration");
   Log(LOG_DEBUG, \$config);
 }
@@ -700,9 +707,11 @@ sub Launcher {
       $noclean = 0;
       exec($cmd);
     }
+    $noclean = 1;
     exit;
   }
   waitpid( $fpid, 0 );
+  $noclean = 1;
   exit;
 }
 
@@ -781,8 +790,7 @@ sub InjectCommand {
   } elsif ( scalar(@sessmenu) == 1) {
     $session = shift @sessmenu;
   } else {
-    Log(LOG_INFO, "No running sessions");
-    print "No running sessions\n";
+    Log(LOG_NOTICE, "No running sessions");
     exit;
   }
 
@@ -902,6 +910,7 @@ exec $attach_command
     if ( $fpid == 0 ) {
       exec @exec;
     }
+    $noclean = 1;
     exit;
   }
   waitpid( $fpid, 0 );
