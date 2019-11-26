@@ -136,6 +136,10 @@ $noclean = 0;
 
 Log(LOG_NOTICE, "tmuxc running as PID $$");
 
+# Export our session name as an environment variable
+my $session_env = join('_', $config->{env_prefix}, "NAME");
+$ENV{$session_env} = $config->{session};
+
 while (1) {
 
   %mapping = ();
@@ -461,6 +465,7 @@ sub LoadConfig {
     "persist"         => "10s",
     "selector"        => [ qw(rofi -dmenu -i) ],
     "tmux_bin"        => "tmux",
+    "env_prefix"      => "TMUX_SESSION",
   );
 
   # Read in the config file
