@@ -39,49 +39,46 @@ sub PauseSelf;
 sub KillSelf;
 sub Log;
 
-
 # Add signal handlers, load our config on start
 BEGIN {
-  $SIG{INT}   = \&CleanExit;
-  $SIG{TERM}  = \&CleanExit; 
-  $SIG{HUP}   = \&LoadConfig;
-  $SIG{PIPE}  = sub {};
+  $SIG{INT}  = \&CleanExit;
+  $SIG{TERM} = \&CleanExit;
+  $SIG{HUP}  = \&LoadConfig;
+  $SIG{PIPE} = sub { };
 }
 
 my (
-  $config,  $configfile,   $pause,
-  $v,       $noclean,
-  $host,    $help,         $passcount,
-  %publicCommands, %defaultOptions,
-  %cli, %mapping, %commandParse, %commandText
+  $config, $configfile, $pause,        $v,              $noclean,
+  $host,   $help,       $passcount,    %publicCommands, %defaultOptions,
+  %cli,    %mapping,    %commandParse, %commandText
 );
 
-$configfile = join('/', ( $ENV{'HOME'}, qw(.tmuxc.conf) ) );
+$configfile = join( '/', ( $ENV{'HOME'}, qw(.tmuxc.conf) ) );
 $noclean    = 1;
 $v          = LOG_NOTICE;
 $pause      = 0;
 $passcount  = 0;
 
 GetOptions(
-  "host|h=s"      => \$cli{host},
-  "session|s=s"   => \$cli{session},
-  "background|b"  => \$cli{background},
-  "config|c=s"    => \$configfile,
-  "detach|d"      => \$cli{detach},
-  "verbose|v+"    => \$v,
-  "killrc|k"      => \$cli{killrc},
-  "pauserc|P"     => \$cli{pauserc},
-  "reconnect|R"   => \$cli{reconnect},
-  "closeas|C"     => \$cli{closeas},
-  "syslog|S=s"    => \$cli{syslog},
-  "exitlast|E"    => \$cli{exitlast},
-  "new|n"         => sub { LoadConfig; InjectCommand("new-window -d"); },
-  "launcher|l"    => sub { LoadConfig; Launcher; },
-  "menu|m"        => sub { LoadConfig; Menu; },
-  "exit|e"        => sub { LoadConfig; InjectCommand("tmuxc KillSelf"); },
-  "pause|p"       => sub { LoadConfig; InjectCommand("tmuxc PauseSelf"); },
-  "raw|r=s"       => sub { my (undef, $cmd) = @_; LoadConfig; InjectCommand($cmd); },
-  "help|?"        => sub { pod2usage( -verbose => 2 ); exit; },
+  "host|h=s"     => \$cli{host},
+  "session|s=s"  => \$cli{session},
+  "background|b" => \$cli{background},
+  "config|c=s"   => \$configfile,
+  "detach|d"     => \$cli{detach},
+  "verbose|v+"   => \$v,
+  "killrc|k"     => \$cli{killrc},
+  "pauserc|P"    => \$cli{pauserc},
+  "reconnect|R"  => \$cli{reconnect},
+  "closeas|C"    => \$cli{closeas},
+  "syslog|S=s"   => \$cli{syslog},
+  "exitlast|E"   => \$cli{exitlast},
+  "new|n"        => sub { LoadConfig; InjectCommand("new-window -d"); },
+  "launcher|l"   => sub { LoadConfig; Launcher; },
+  "menu|m"       => sub { LoadConfig; Menu; },
+  "exit|e"       => sub { LoadConfig; InjectCommand("tmuxc KillSelf"); },
+  "pause|p"      => sub { LoadConfig; InjectCommand("tmuxc PauseSelf"); },
+  "raw|r=s"      => sub { my ( undef, $cmd ) = @_; LoadConfig; InjectCommand($cmd); },
+  "help|?"       => sub { pod2usage( -verbose => 2 ); exit; },
 );
 
 # Set our log_level based on verbose flags
@@ -95,13 +92,13 @@ if ( -f $config->{pidfile} ) {
   my $pid = <PID>;
   close PID;
   if ( kill( 0, $pid ) ) {
-    Log(LOG_DEBUG, "$config->{pidfile} exists, and is running");
+    Log( LOG_DEBUG, "$config->{pidfile} exists, and is running" );
     die "$config->{pidfile} exists, and pid $pid is running\n";
   }
 }
 
 # Double fork
-if ($config->{background}) {
+if ( $config->{background} ) {
   my $fpid = fork;
   exit if $fpid;    # kill first parent
   open STDIN,  '/dev/null';
@@ -114,10 +111,10 @@ if ($config->{background}) {
 
 unless ( $config->{log_facility} eq '' ) {
   openlog( $RealScript, "nofatal,ndelay,pid", $config->{log_facility} );
-  setlogmask( LOG_UPTO($config->{log_level}) );
+  setlogmask( LOG_UPTO( $config->{log_level} ) );
 }
 
-if ($config->{log_level} == LOG_NOTICE) {
+if ( $config->{log_level} == LOG_NOTICE ) {
   close STDERR;
 }
 
@@ -131,10 +128,10 @@ close PID;
 # Disable the noclean flag, now that we've written a PID to disk
 $noclean = 0;
 
-Log(LOG_NOTICE, "tmuxc running as PID $$");
+Log( LOG_NOTICE, "tmuxc running as PID $$" );
 
 # Export our session name as an environment variable
-my $session_env = join('_', $config->{env_prefix}, "NAME");
+my $session_env = join( '_', $config->{env_prefix}, "NAME" );
 $ENV{$session_env} = $config->{session};
 
 while (1) {
@@ -144,31 +141,40 @@ while (1) {
 
   # Remote host mode!
   # Check if we have a ControlMaster session, create it if not
-  if (defined($host)) {
-    @cmd = buildCommand( undef, [
+  if ( defined($host) ) {
+    @cmd = buildCommand(
+      undef,
+      [
         qq(ssh -q -O check),
         qq(-o ConnectTimeout=$config->{conn_timeout}),
         qq(-o ControlPath=$config->{temp}ssh/%C 2>/dev/null),
-        $host ]);
+        $host
+      ]
+    );
     qx(@cmd);
 
     # Master isn't running, start up a new ControlMaster
     if ( ( $? >> 8 ) != 0 ) {
-      Log(LOG_DEBUG, "ControlMaster for $host not running, creating one");
-      @cmd = buildCommand( undef, [ qq(ssh),
-        qq(-o ConnectTimeout=$config->{conn_timeout}),
-        qq(-o ServerAliveInterval=$config->{alive_interval}),
-        qq(-o ServerAliveCountMax=$config->{alive_count}),
-        qq(-o ControlPersist=$config->{persist}),
-        qq(-o ControlPath=$config->{temp}ssh/%C),
-        qq(-o ControlMaster=yes),
-        qq(@{ $config->{ssh_args} }),
-        qq(-f -N),
-        $host ] );
+      Log( LOG_DEBUG, "ControlMaster for $host not running, creating one" );
+      @cmd = buildCommand(
+        undef,
+        [
+          qq(ssh),
+          qq(-o ConnectTimeout=$config->{conn_timeout}),
+          qq(-o ServerAliveInterval=$config->{alive_interval}),
+          qq(-o ServerAliveCountMax=$config->{alive_count}),
+          qq(-o ControlPersist=$config->{persist}),
+          qq(-o ControlPath=$config->{temp}ssh/%C),
+          qq(-o ControlMaster=yes),
+          qq(@{ $config->{ssh_args} }),
+          qq(-f -N),
+          $host
+        ]
+      );
       qx(@cmd);
 
       if ( ( $? >> 8 ) != 0 ) {
-        Log(LOG_INFO, "Retrying connection to $host in 5 seconds");
+        Log( LOG_INFO, "Retrying connection to $host in 5 seconds" );
         sleep 5;
         if ( $config->{reconnect} ) {
           goto MAINEND;
@@ -178,18 +184,19 @@ while (1) {
   }
 
   # Tell the remote instance to kill itself
-  if (($config->{killrc}) and ($host)) {
-    Log(LOG_INFO, "Killing remote tmuxc instance");
-    Log(LOG_DEBUG, \@cmd);
-    my $control = join('-', qw(localhost), $config->{session});
-    @cmd = buildCommand( $cli{host}, [ qw(tmuxc -h localhost -s), $config->{session}, qw(-e) ]);
+  if ( ( $config->{killrc} ) and ($host) ) {
+    Log( LOG_INFO,  "Killing remote tmuxc instance" );
+    Log( LOG_DEBUG, \@cmd );
+    my $control = join( '-', qw(localhost), $config->{session} );
+    @cmd = buildCommand( $cli{host}, [ qw(tmuxc -h localhost -s), $config->{session}, qw(-e) ] );
     qx(@cmd);
-  # Tell the remote instance to pause itself 
-  } elsif (($config->{pauserc}) and ($host)) { 
-    Log(LOG_INFO, "Pausing remote tmuxc instance");
-    Log(LOG_DEBUG, \@cmd);
-    my $control = join('-', qw(localhost), $config->{session});
-    @cmd = buildCommand( $cli{host}, [ qw(tmuxc -h localhost -s), $config->{session}, qw(-p) ]);
+
+    # Tell the remote instance to pause itself
+  } elsif ( ( $config->{pauserc} ) and ($host) ) {
+    Log( LOG_INFO,  "Pausing remote tmuxc instance" );
+    Log( LOG_DEBUG, \@cmd );
+    my $control = join( '-', qw(localhost), $config->{session} );
+    @cmd = buildCommand( $cli{host}, [ qw(tmuxc -h localhost -s), $config->{session}, qw(-p) ] );
     qx(@cmd);
   }
 
@@ -199,14 +206,16 @@ while (1) {
 
   # If the session doesn't exist, use the user-defined method if it exists, else make a new empty one
   if ( ( $? >> 8 ) != 0 ) {
+
     # Second time through the loop and our session doesn't exist, so exit instead of creating a new session
-    last if ( ( $config->{exitlast} ) and ( $passcount ) );
+    last if ( ( $config->{exitlast} ) and ($passcount) );
 
-    my $chost = $config->{chost};
-    my $sess  = $config->{session};
-    my $initialize = $config->{hosts}{$chost}{$sess}{initialize} || [ $config->{tmux_bin}, qw(new-session -d -s), $sess ];
+    my $chost      = $config->{chost};
+    my $sess       = $config->{session};
+    my $initialize = $config->{hosts}{$chost}{$sess}{initialize}
+      || [ $config->{tmux_bin}, qw(new-session -d -s), $sess ];
 
-    Log(LOG_INFO, "Initializing session: $sess");
+    Log( LOG_INFO, "Initializing session: $sess" );
 
     @cmd = buildCommand( $host, $initialize );
     qx(@cmd);
@@ -221,20 +230,14 @@ while (1) {
   qx(@cmd);
 
   if ( ( $? >> 8 ) == 0 ) {
-    Log(LOG_DEBUG, "Killing existing control session");
+    Log( LOG_DEBUG, "Killing existing control session" );
     @cmd = buildCommand( $host, [ $config->{tmux_bin}, qw(kill-session -t), $config->{control}, ] );
     qx(@cmd);
   }
 
   # Create control clone session
-  @cmd = buildCommand(
-    $host,
-    [
-      $config->{tmux_bin},
-      qw(new-session -d -t), $config->{session},
-      qw(-s),                $config->{control},
-    ]
-  );
+  @cmd = buildCommand( $host,
+    [ $config->{tmux_bin}, qw(new-session -d -t), $config->{session}, qw(-s), $config->{control}, ] );
 
   qx(@cmd);
 
@@ -264,24 +267,28 @@ while (1) {
   # Install our USR1 handler to process anything in the FIFO
   $SIG{USR1} = sub {
     my @commands = <CONTROL_FIFO>;
-    Log(LOG_DEBUG, "Processing commands in FIFO handler:");
-    Log(LOG_DEBUG, \@commands);
+    Log( LOG_DEBUG, "Processing commands in FIFO handler:" );
+    Log( LOG_DEBUG, \@commands );
     foreach my $line (@commands) {
       if ($pause) {
-        next unless ($line =~ m/tmuxc PauseSelf/);
+        next unless ( $line =~ m/tmuxc PauseSelf/ );
       }
+
       # Lines prefixed with tmuxc hit our internal command dispatcher
       if ( $line =~ m/^tmuxc\s(.*)/ ) {
+
         # The command causes tmux to print a block output, which we later parse
         if ( exists( $commandText{$1} ) ) {
           print $child_in $commandText{$1};
         } elsif ( exists( $publicCommands{$1} ) ) {
+
           # Execute a command directly with no required input
           $publicCommands{$1}->();
         } else {
-          Log(LOG_INFO, "FIFO Handler: Unknown command $1");
+          Log( LOG_INFO, "FIFO Handler: Unknown command $1" );
         }
       } else {
+
         # everything else is assumed to be a raw tmux command
         print $child_in "$line\n";
       }
@@ -295,7 +302,7 @@ while (1) {
   print $child_in $commandText{'ListWindows'};
 
   # Detach any clients connected to windows
-  if ($config->{detach}) {
+  if ( $config->{detach} ) {
     print $child_in $commandText{'BulkDetach'};
   }
 
@@ -308,7 +315,7 @@ while (1) {
     next if $pause;
     next if $line =~ m/^\%output/;
     $line =~ s/\r\n/\n/g;
-    Log(LOG_DEBUG, "$line");
+    Log( LOG_DEBUG, "$line" );
 
     # Trigger block capture mode
     if ( $line =~ m/^\%begin/ ) {
@@ -320,14 +327,13 @@ while (1) {
     if ( $line =~ m/^\%end/ ) {
       $blockCapture = 0;
       next unless defined($function);
-      Log(LOG_DEBUG, "Captured $function block");
+      Log( LOG_DEBUG, "Captured $function block" );
 
       my $cmd = $function;
       if ( exists( $commandParse{$cmd} ) ) {
         $commandParse{$cmd}->( \@block, $child_in );
-      }
-      else {
-        Log(LOG_DEBUG, "No handler for $cmd");
+      } else {
+        Log( LOG_DEBUG, "No handler for $cmd" );
       }
       @block    = ();
       $function = undef;
@@ -349,28 +355,24 @@ while (1) {
       if ( exists $mapping{windows}{$1}{'pending'} ) {
 
         # This is removed only by spawnTerm
-        Log(LOG_DEBUG, "Skipping window-add: Session pending for $1");
+        Log( LOG_DEBUG, "Skipping window-add: Session pending for $1" );
         next;
-      }
-      elsif ( defined $mapping{clients}{$1} ) {
-        Log(LOG_DEBUG, "Skipping window-add: One or more clients attached to $1");
+      } elsif ( defined $mapping{clients}{$1} ) {
+        Log( LOG_DEBUG, "Skipping window-add: One or more clients attached to $1" );
         next;
-      }
-      elsif ( $mapping{windows}{$1}{'blacklisted'} ) {
+      } elsif ( $mapping{windows}{$1}{'blacklisted'} ) {
 
         # When a window is added to a running session, we do not know the name of the window
         # blacklisting only works when initially connecting to a session
-        Log(LOG_DEBUG, "Skipping window-add: $1 is blacklisted");
+        Log( LOG_DEBUG, "Skipping window-add: $1 is blacklisted" );
         next;
-      }
-      elsif ( $mapping{windows}{$1}{ignore} ) {
-        Log(LOG_DEBUG, "Skipping window-add: Ignore flag set for $1");
+      } elsif ( $mapping{windows}{$1}{ignore} ) {
+        Log( LOG_DEBUG, "Skipping window-add: Ignore flag set for $1" );
         next;
-      }
-      else {
+      } else {
         $mapping{windows}{$1}{'pending'} = 1;
         print $child_in $commandText{'ListWindows'};
-        Log(LOG_DEBUG, "window-add: Spawning a terminal for $1");
+        Log( LOG_DEBUG, "window-add: Spawning a terminal for $1" );
         spawnTerm( $host, $sess, $1 );
         next;
       }
@@ -379,14 +381,14 @@ while (1) {
     # Update our internal knowledge of the window name
     # Currently not really useful ...
     if ( $line =~ m/^\%window-renamed\s(@\d+)\s(.*)/ ) {
-      Log(LOG_DEBUG, "Running $commandText{'ListWindows'}");
+      Log( LOG_DEBUG, "Running $commandText{'ListWindows'}" );
       print $child_in $commandText{'ListWindows'};
       next;
     }
 
     # Update our client <> window map - two clients likely point to a single window
     if ( $line =~ m/^\%session-window-changed\s(\$\d+)\s(\@\d+)/ ) {
-      Log(LOG_DEBUG, "Running $commandText{'ClientMap'}");
+      Log( LOG_DEBUG, "Running $commandText{'ClientMap'}" );
       print $child_in $commandText{'ClientMap'};
       next;
     }
@@ -395,7 +397,7 @@ while (1) {
     # %client-session-changed /dev/pts/10 $163 penthe-global-session-1545894242-319412-45
     # This is probably a useless event to process
     if ( $line =~ m/^\%client-session-changed\s(.*)\s(\$\d+)\s([\w-]+)/ ) {
-      Log(LOG_DEBUG, "Running $commandText{'ClientMap'}");
+      Log( LOG_DEBUG, "Running $commandText{'ClientMap'}" );
       print $child_in $commandText{'ClientMap'};
       next;
     }
@@ -403,7 +405,7 @@ while (1) {
     # Produced when a client attaches or detaches
     # This is probably a useless event to process
     if ( $line =~ m/^%sessions-changed/ ) {
-      Log(LOG_DEBUG, "Running $commandText{'ClientMap'}");
+      Log( LOG_DEBUG, "Running $commandText{'ClientMap'}" );
       print $child_in $commandText{'ClientMap'};
       next;
     }
@@ -414,7 +416,7 @@ while (1) {
       next unless exists $mapping{clients}{$1};
       while ( @{ $mapping{clients}{$1} } ) {
         my $client = pop @{ $mapping{clients}{$1} };
-        Log(LOG_DEBUG, "Killing session $client, window $1 close");
+        Log( LOG_DEBUG, "Killing session $client, window $1 close" );
         print $child_in $commandText{'KillClient'} . "$client\n";
       }
       delete $mapping{clients}{$1};
@@ -424,9 +426,9 @@ while (1) {
 
     }
   }
-  MAINEND:
+MAINEND:
   $passcount = 1;
-  exit unless ( ( $config->{reconnect} ) or not ( $config->{exitlast} ) );
+  exit unless ( ( $config->{reconnect} ) or not( $config->{exitlast} ) );
 }
 
 END {
@@ -448,93 +450,104 @@ sub LoadConfig {
   undef $config;
 
   %defaultOptions = (
-    "detach"          => 0,
-    "killrc"          => 0,
-    "pauserc"         => 0,
-    "reconnect"       => 1,
-    "closeas"         => 0,
-    "background"      => 0,
-    "log_facility"    => "",
-    "log_level"       => LOG_ALERT,
-    "exitlast"        => 0,
-    "terminal"        => [ qw(xterm) ],
-    "ssh_args"        => [ qw() ],
-    "alive_interval"  => 3,
-    "alive_count"     => 2,
-    "conn_timeout"    => 3,
-    "persist"         => "10s",
-    "selector"        => [ qw(rofi -dmenu -i) ],
-    "tmux_bin"        => "tmux",
-    "env_prefix"      => "TMUX_SESSION",
+    "detach"         => 0,
+    "killrc"         => 0,
+    "pauserc"        => 0,
+    "reconnect"      => 1,
+    "closeas"        => 0,
+    "background"     => 0,
+    "log_facility"   => "",
+    "log_level"      => LOG_ALERT,
+    "exitlast"       => 0,
+    "terminal"       => [qw(xterm)],
+    "ssh_args"       => [qw()],
+    "alive_interval" => 3,
+    "alive_count"    => 2,
+    "conn_timeout"   => 3,
+    "persist"        => "10s",
+    "selector"       => [qw(rofi -dmenu -i)],
+    "tmux_bin"       => "tmux",
+    "env_prefix"     => "TMUX_SESSION",
   );
 
   # Read in the config file
   if ( -e $configfile ) {
     $config = do($configfile) or die $!;
-  }
-  else {
-    $config->{temp}     = join('/', ( $ENV{'HOME'}, qw(.tmuxc) ));
+  } else {
+    $config->{temp} = join( '/', ( $ENV{'HOME'}, qw(.tmuxc) ) );
   }
 
   # strip a trailing slash if present, thanks Brian D Foy
   #$config->{temp} =~ s|/\z||;
- 
+
   # Add a trailing slash, so joins are easier
   $config->{temp} =~ s|/*$|/|;
 
   # Set our hostname config key
-  my $chost = defined($cli{host}) ? $cli{host} : "localhost";
-  $config->{chost} = $chost; 
+  my $chost = defined( $cli{host} ) ? $cli{host} : "localhost";
+  $config->{chost} = $chost;
 
   # Set our $host
-  $host = (defined($cli{host}) and ($cli{host} ne "localhost")) ? $cli{host} : undef;
+  $host =
+    ( defined( $cli{host} ) and ( $cli{host} ne "localhost" ) )
+    ? $cli{host}
+    : undef;
 
   # Determine which session name takes precedence
-  if ( defined($cli{session}) ) {
+  if ( defined( $cli{session} ) ) {
+
     # Set on the command line
     $config->{session} = $cli{session};
   } elsif ( defined( $config->{hosts}{$chost} ) ) {
+
     # Pick the first session under this host, sorted, that is not a config key
-    foreach my $key (sort keys %{ $config->{hosts}{$chost} } ) {
-      next if defined($defaultOptions{$key});
+    foreach my $key ( sort keys %{ $config->{hosts}{$chost} } ) {
+      next if defined( $defaultOptions{$key} );
       $config->{session} = $key;
     }
   } elsif ( not defined( $config->{session} ) ) {
+
     # Not set at all in the config file, set a default
     $config->{session} = "global-session";
   }
-  
+
   my $sess = $config->{session};
   my %precedence;
 
   # Look up a number of keys that can be set at different levels
   # If no value can be found, use a sane default
-  foreach my $key (keys %defaultOptions) {
-    if (defined($cli{$key})) {
+  foreach my $key ( keys %defaultOptions ) {
+    if ( defined( $cli{$key} ) ) {
+
       # set on the CLI
       $precedence{$key} = $cli{$key};
-    } elsif (defined($config->{hosts}{$chost}{$sess}{$key})) {
+    } elsif ( defined( $config->{hosts}{$chost}{$sess}{$key} ) ) {
+
       # Set for a specific host/session combo
       $precedence{$key} = $config->{hosts}{$chost}{$sess}{$key};
-    } elsif (defined($config->{hosts}{$chost}{$key})) {
+    } elsif ( defined( $config->{hosts}{$chost}{$key} ) ) {
+
       # Set for a specific host
       $precedence{$key} = $config->{hosts}{$chost}{$key};
-    } elsif (defined($config->{$key})) {
+    } elsif ( defined( $config->{$key} ) ) {
+
       # Set globally in the config
       $precedence{$key} = $config->{$key};
     } else {
+
       # Not defined anywhere, set our fall-back default
       $precedence{$key} = $defaultOptions{$key};
     }
+
     # Set the key/value in the config hash
     $config->{$key} = $precedence{$key};
   }
 
   # Make our temp directory and subdirectories
   mkdir $config->{temp} unless -d $config->{temp};
-  my @subs = ( "ssh", "control","pid" );
+  my @subs = ( "ssh", "control", "pid" );
   foreach my $dir (@subs) {
-    my $fulldir = join('', $config->{temp}, $dir);
+    my $fulldir = join( '', $config->{temp}, $dir );
     mkdir $fulldir unless -d $fulldir;
   }
 
@@ -545,23 +558,25 @@ sub LoadConfig {
   $config->{control} = join( '', ( $config->{hostname}, qw(-), $config->{session}, qw(-control) ) );
 
   # Define our command fifo
-  $config->{command} = join( '', ( $config->{temp}, qw(control/), $config->{session}, qw(@), $config->{chost}, qw(.control) ));
+  $config->{command} =
+    join( '', ( $config->{temp}, qw(control/), $config->{session}, qw(@), $config->{chost}, qw(.control) ) );
 
   # Define our PID file
-  $config->{pidfile} = join( '', ( $config->{temp}, qw(pid/), $config->{session}, qw(@), $config->{chost}, qw(.pid) ));
+  $config->{pidfile} = join( '', ( $config->{temp}, qw(pid/), $config->{session}, qw(@), $config->{chost}, qw(.pid) ) );
 
   %publicCommands = (
-    'KillSelf'    => \&KillSelf,
-    'PauseSelf'   => \&PauseSelf,
+    'KillSelf'  => \&KillSelf,
+    'PauseSelf' => \&PauseSelf,
   );
 
   # The first field in the format string indicates the lookup key for %commandParse
   %commandText = (
-    'ListWindows'   => "lsw -F 'ListWindows:#{session_group},#{window_id},#{window_name},#{window_index}' -t " . $config->{session} . "\n",
-    'BulkSpawn'     => "lsc -F 'BulkSpawn:#{session_group},#{session_id},#{session_name},#{window_id}'\n",
-    'BulkDetach'    => "lsc -F 'BulkDetach:#{session_group},#{session_id},#{session_name},#{window_id}'\n",
-    'ClientMap'     => "lsc -F 'ClientMap:#{session_group},#{session_id},#{session_name},#{window_id},#{window_name}'\n",
-    'KillClient'    => "kill-session -t ",
+    'ListWindows' => "lsw -F 'ListWindows:#{session_group},#{window_id},#{window_name},#{window_index}' -t "
+      . $config->{session} . "\n",
+    'BulkSpawn'  => "lsc -F 'BulkSpawn:#{session_group},#{session_id},#{session_name},#{window_id}'\n",
+    'BulkDetach' => "lsc -F 'BulkDetach:#{session_group},#{session_id},#{session_name},#{window_id}'\n",
+    'ClientMap'  => "lsc -F 'ClientMap:#{session_group},#{session_id},#{session_name},#{window_id},#{window_name}'\n",
+    'KillClient' => "kill-session -t ",
   );
 
   %commandParse = (
@@ -571,8 +586,8 @@ sub LoadConfig {
     'ClientMap'   => \&ClientMap,
   );
 
-  Log(LOG_DEBUG, "Run-time configuration");
-  Log(LOG_DEBUG, \$config);
+  Log( LOG_DEBUG, "Run-time configuration" );
+  Log( LOG_DEBUG, \$config );
 }
 
 # Simple command dispatcher, InjectCommand picks/prompts for the session
@@ -600,20 +615,23 @@ sub Menu {
 
 sub InstanceCheck {
 
-  # Generate a list of instances from config file 
+  # Generate a list of instances from config file
   my ( @check, $instances );
   foreach my $host ( sort keys %{ $config->{hosts} } ) {
     foreach my $session ( sort keys %{ $config->{hosts}{$host} } ) {
+
       # Skip if this is an option name / reserved word
-      next if defined($defaultOptions{$session});
+      next if defined( $defaultOptions{$session} );
       push @check, "$session\@$host";
     }
   }
 
   # Check each instance defined in config file
   for my $session (@check) {
-    my $control = join( '', ( $config->{temp}, qw(control/), $session , ".control" ));
-    my $pidfile = join( '', ( $config->{temp}, qw(pid/), $session , ".pid" ));
+    my $control =
+      join( '', ( $config->{temp}, qw(control/), $session, ".control" ) );
+    my $pidfile =
+      join( '', ( $config->{temp}, qw(pid/), $session, ".pid" ) );
     if ( -f $pidfile ) {
       open PID, '<', $pidfile;
       my $pid = <PID>;
@@ -630,9 +648,8 @@ sub InstanceCheck {
     }
   }
 
-  my $cglob     = join( '', ( $config->{temp}, qw(control/), "*.control" ));
-  my @controls  = glob($cglob);
-
+  my $cglob    = join( '', ( $config->{temp}, qw(control/), "*.control" ) );
+  my @controls = glob($cglob);
 
   for my $control (@controls) {
     my $filename = basename($control);
@@ -652,12 +669,14 @@ sub InstanceCheck {
           push @{ $instances->{running} }, $filename;
         }
       } else {
+
         # If the pid isn't running, this is a one-off session that somehow lingered on
         # Remove the pidfile and the control socket
         unlink $pidfile;
         unlink $control;
       }
     } else {
+
       # No pidfile associated with this control socket, purge it
       unlink $control;
     }
@@ -671,7 +690,7 @@ sub Launcher {
 
   my $instances = InstanceCheck;
 
-  if (defined($instances->{dead})) {
+  if ( defined( $instances->{dead} ) ) {
     @dead = @{ $instances->{dead} };
   }
 
@@ -696,8 +715,7 @@ sub Launcher {
   my $cmd;
   if ( $host eq "localhost" ) {
     $cmd = join( ' ', ( $myself, qw(-s), $sess, qw(-b) ) );
-  }
-  else {
+  } else {
     $cmd = join( ' ', ( $myself, qw(-h), $host, qw(-s), $sess, qw(-b) ) );
   }
 
@@ -726,12 +744,12 @@ sub Launcher {
 sub InjectCommand {
   my $command = shift;
 
-  Log(LOG_DEBUG, "InjectCommand: $command");
+  Log( LOG_DEBUG, "InjectCommand: $command" );
 
   my $instances = InstanceCheck;
 
   my @sessions;
-  if (defined($instances->{running})) {
+  if ( defined( $instances->{running} ) ) {
     @sessions = @{ $instances->{running} };
   } else {
     exit;
@@ -739,38 +757,42 @@ sub InjectCommand {
   my @sessmenu;
 
   # An exact host and session were provided
-  if ($cli{host} and $cli{session}) {
+  if ( $cli{host} and $cli{session} ) {
     my $session = join( '', $cli{session}, qw(@), $cli{host} );
     if ( grep { $_ eq $session } @sessions ) {
       push @sessmenu, $session;
     }
-  # Find all hosts that match what was provided on the CLI
-  } elsif ($cli{host}) {
+
+    # Find all hosts that match what was provided on the CLI
+  } elsif ( $cli{host} ) {
     for (@sessions) {
-      if ($_ =~ m/$cli{host}/) {
-        push @sessmenu, $_
+      if ( $_ =~ m/$cli{host}/ ) {
+        push @sessmenu, $_;
       }
     }
-  # Find all sessions that match what was provided on the CLi
-  } elsif ($cli{session}) {
+
+    # Find all sessions that match what was provided on the CLi
+  } elsif ( $cli{session} ) {
     for (@sessions) {
-      if ($_ =~ m/$cli{session}/) {
-        push @sessmenu, $_
+      if ( $_ =~ m/$cli{session}/ ) {
+        push @sessmenu, $_;
       }
     }
-  # Nothing provided, prompt with all running hosts/sessions
+
+    # Nothing provided, prompt with all running hosts/sessions
   } else {
     @sessmenu = @sessions;
   }
 
   # I really should learn splice some day
-  if (($command =~ m/new-window/)
-    and (not defined($cli{host}))
-    and (not defined($cli{session}))) {
+  if (  ( $command =~ m/new-window/ )
+    and ( not defined( $cli{host} ) )
+    and ( not defined( $cli{session} ) ) )
+  {
     my @clean;
     for (@sessmenu) {
       my ( $sess, $host ) = split( '@', $_, 2 );
-      unless ($config->{hosts}{$host}{$sess}{skipnw}) {
+      unless ( $config->{hosts}{$host}{$sess}{skipnw} ) {
         push @clean, $_;
       }
     }
@@ -792,18 +814,19 @@ sub InjectCommand {
     $session = <$child_out>;
     exit unless defined($session);
     chomp($session);
-  } elsif ( scalar(@sessmenu) == 1) {
+  } elsif ( scalar(@sessmenu) == 1 ) {
     $session = shift @sessmenu;
   } else {
-    Log(LOG_NOTICE, "No running sessions");
+    Log( LOG_NOTICE, "No running sessions" );
     exit;
   }
 
-  my $control = join( '', ( $config->{temp}, qw(control/), $session , ".control" ));
-  my $pidfile = join( '', ( $config->{temp}, qw(pid/), $session , ".pid" ));
+  my $control =
+    join( '', ( $config->{temp}, qw(control/), $session, ".control" ) );
+  my $pidfile = join( '', ( $config->{temp}, qw(pid/), $session, ".pid" ) );
 
-  Log(LOG_DEBUG, "PID file is $pidfile");
-  Log(LOG_DEBUG, "Control file is $control");
+  Log( LOG_DEBUG, "PID file is $pidfile" );
+  Log( LOG_DEBUG, "Control file is $control" );
 
   my $pid;
   if ( -f $pidfile ) {
@@ -845,10 +868,10 @@ sub buildCommand {
   my $remote = shift;
   return @{ $_[0] } unless $remote;
 
-  my $cpath = join('', $config->{temp}, qw(ssh/%C) );
+  my $cpath = join( '', $config->{temp}, qw(ssh/%C) );
   my @cmd =
-    grep { length }
-    qw(ssh -q -t), @{ $config->{ssh_args} }, qw(-S), $cpath, $remote, shellQuote(@_);
+    grep { length } qw(ssh -q -t), @{ $config->{ssh_args} }, qw(-S), $cpath,
+    $remote, shellQuote(@_);
 
   return @cmd;
 }
@@ -856,36 +879,24 @@ sub buildCommand {
 # Write out a custom shell script and launch it with our terminal
 sub spawnTerm {
   my ( $host, $session, $window ) = @_;
-  my ( undef, $id ) = split( '@', $window );
-  my ( $sec, $usec ) = gettimeofday();
+  my ( undef, $id )   = split( '@', $window );
+  my ( $sec,  $usec ) = gettimeofday();
   my $clone_session = $config->{hostname} . "-$session-$sec-$usec-$id";
 
-  my @cmd = buildCommand(
-    $host,
-    [
-      $config->{tmux_bin},
-      qw(new-session -d -t),
-      $session,
-      qw(-s),
-      $clone_session,
-    ]
-  );
+  my @cmd = buildCommand( $host, [ $config->{tmux_bin}, qw(new-session -d -t), $session, qw(-s), $clone_session, ] );
   my $clone_command = join( ' ', @cmd );
 
   @cmd = buildCommand(
     $host,
     [
-      $config->{tmux_bin},
-      qw(attach-session -t),
-      $clone_session,
-      qw(\; set-option destroy-unattached on),
-      qw(\; select-window -t),
-      $window,
+      $config->{tmux_bin},     qw(attach-session -t),
+      $clone_session,          qw(\; set-option destroy-unattached on),
+      qw(\; select-window -t), $window,
     ]
   );
   my $attach_command = join( ' ', @cmd );
 
-  my $script       = join( '', ( $config->{temp}, $clone_session));
+  my $script       = join( '', ( $config->{temp}, $clone_session ) );
   my $start_script = qq|#!/bin/sh
 test -f $script && rm $script
 $clone_command
@@ -899,8 +910,8 @@ exec $attach_command
 
   my @exec = @{ $config->{terminal} };
   push @exec, $script;
-  Log(LOG_DEBUG, "Terminal spawn command");
-  Log(LOG_DEBUG, \@exec);
+  Log( LOG_DEBUG, "Terminal spawn command" );
+  Log( LOG_DEBUG, \@exec );
   my $fpid = fork;
   if ( $fpid == 0 ) {
     exit 255 unless open STDIN,  '/dev/null';
@@ -921,14 +932,14 @@ exec $attach_command
 # Return 1 if blacklisted, 0 if not
 sub checkIfBlacklisted {
   my $window = shift;
-  Log(LOG_DEBUG, "Checking if $window is blacklisted on $config->{chost}");
+  Log( LOG_DEBUG, "Checking if $window is blacklisted on $config->{chost}" );
 
   my $chost = $config->{chost};
   my $sess  = $config->{session};
 
   if ( defined( $config->{hosts}{$chost}{$sess}{blacklist} ) ) {
     if ( grep { $_ eq $window } @{ $config->{hosts}{$chost}{$sess}{blacklist} } ) {
-      Log(LOG_DEBUG, "Blacklisted window: $window");
+      Log( LOG_DEBUG, "Blacklisted window: $window" );
       return 1;
     }
   }
@@ -945,8 +956,8 @@ sub ListWindows {
     $mapping{windows}{$id}{'blacklisted'} =
       ( checkIfBlacklisted($name) ) ? 1 : 0;
   }
-  Log(LOG_DEBUG, "ListWindows end");
-  Log(LOG_DEBUG, \%mapping);
+  Log( LOG_DEBUG, "ListWindows end" );
+  Log( LOG_DEBUG, \%mapping );
 }
 
 # Detach all clients from all windows, leaving everything else running
@@ -955,8 +966,8 @@ sub BulkDetach {
   my $block    = shift;
   my $child_in = shift;
 
-  Log(LOG_DEBUG, "BulkDetach start"); 
-  Log(LOG_DEBUG, \%mapping );
+  Log( LOG_DEBUG, "BulkDetach start" );
+  Log( LOG_DEBUG, \%mapping );
 
   for my $entry ( @{$block} ) {
     my ( $group, $sid, $name, $wid ) = split( ',', $entry );
@@ -967,7 +978,7 @@ sub BulkDetach {
     # Filter out our control session
     next if $config->{control} eq $name;
 
-    Log(LOG_INFO, "Detaching terminal from $sid");
+    Log( LOG_INFO, "Detaching terminal from $sid" );
     print $child_in $commandText{'KillClient'} . "$sid\n";
   }
 }
@@ -977,8 +988,8 @@ sub BulkSpawn {
   my $block    = shift;
   my $child_in = shift;
 
-  Log(LOG_DEBUG, "BulkSpawn start");
-  Log(LOG_DEBUG, \%mapping);
+  Log( LOG_DEBUG, "BulkSpawn start" );
+  Log( LOG_DEBUG, \%mapping );
 
   for my $entry ( @{$block} ) {
     my ( $group, $sid, $name, $wid ) = split( ',', $entry );
@@ -1001,18 +1012,17 @@ sub BulkSpawn {
   foreach my $window ( keys %{ $mapping{windows} } ) {
     if ( exists $mapping{clients}{$window} ) {
       next;
-    }
-    else {
+    } else {
       unless ( checkIfBlacklisted( $mapping{windows}{$window}{name} ) ) {
-        Log(LOG_INFO, "Spawning a terminal for $window"); 
+        Log( LOG_INFO, "Spawning a terminal for $window" );
         delete $mapping{clients}{$window};
         $mapping{windows}{$window}{'pending'} = 1;
         spawnTerm( $host, $config->{session}, $window );
       }
     }
   }
-  Log(LOG_DEBUG, "BulkSpawn end");
-  Log(LOG_DEBUG, \%mapping);
+  Log( LOG_DEBUG, "BulkSpawn end" );
+  Log( LOG_DEBUG, \%mapping );
 }
 
 # Build a map of all windows and the clients viewing the window
@@ -1024,8 +1034,8 @@ sub ClientMap {
   my $sess     = $config->{session};
   my @found_windows;
 
-  Log(LOG_DEBUG, "ClientMap start");
-  Log(LOG_DEBUG, \%mapping );
+  Log( LOG_DEBUG, "ClientMap start" );
+  Log( LOG_DEBUG, \%mapping );
 
   # Purge existing mappings
   my %previous = %mapping{clients};
@@ -1055,21 +1065,25 @@ sub ClientMap {
 
   foreach my $window ( keys %{ $previous{clients} } ) {
     unless ( defined( $mapping{clients}{$window} ) ) {
-      Log(LOG_INFO, "Setting ignore flag for $window");
+      Log( LOG_INFO, "Setting ignore flag for $window" );
       $mapping{windows}{$window}{ignore} = 1;
     }
   }
 
-  Log(LOG_DEBUG, "ClientMap end");
-  Log(LOG_DEBUG, \%mapping );
+  Log( LOG_DEBUG, "ClientMap end" );
+  Log( LOG_DEBUG, \%mapping );
 
-  if ($config->{closeas}) {
+  if ( $config->{closeas} ) {
     my $close = 1;
-    foreach my $win (keys %{ $mapping{windows} }){
-      next if (defined $mapping{windows}{$win}{ignored} and $mapping{windows}{$win}{ignored});
-      next if (defined $mapping{windows}{$win}{blacklisted} and $mapping{windows}{$win}{blacklisted});
-      next if (defined $mapping{clients}{$win});
-      
+    foreach my $win ( keys %{ $mapping{windows} } ) {
+      next
+        if ( defined $mapping{windows}{$win}{ignored}
+        and $mapping{windows}{$win}{ignored} );
+      next
+        if ( defined $mapping{windows}{$win}{blacklisted}
+        and $mapping{windows}{$win}{blacklisted} );
+      next if ( defined $mapping{clients}{$win} );
+
       # We aren't done spawning windows, so don't exit yet
       $close = 0;
     }
@@ -1093,18 +1107,17 @@ sub Log {
   my $entry = shift;
 
   chomp($entry);
-  if ($level le $config->{log_level}) {
-    if ($config->{log_level} == LOG_DEBUG) {
-      unless ( ref($entry)) {
-        syslog($config->{log_level}, "%s", $entry);
+  if ( $level le $config->{log_level} ) {
+    if ( $config->{log_level} == LOG_DEBUG ) {
+      unless ( ref($entry) ) {
+        syslog( $config->{log_level}, "%s", $entry );
         print STDERR "## $entry\n";
       } else {
         print STDERR Dumper($entry);
       }
       return;
-    }
-    else {
-      syslog($config->{log_level}, "%s", $entry);
+    } else {
+      syslog( $config->{log_level}, "%s", $entry );
       print STDOUT "$entry\n";
       return;
     }
