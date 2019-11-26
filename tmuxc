@@ -181,23 +181,23 @@ while (1) {
         }
       }
     }
-  }
 
-  # Tell the remote instance to kill itself
-  if ( ( $config->{killrc} ) and ($host) ) {
-    Log( LOG_INFO,  "Killing remote tmuxc instance" );
-    Log( LOG_DEBUG, \@cmd );
-    my $control = join( '-', qw(localhost), $config->{session} );
-    @cmd = buildCommand( $cli{host}, [ qw(tmuxc -h localhost -s), $config->{session}, qw(-e) ] );
-    qx(@cmd);
+    # Tell the remote instance to kill itself
+    if ( $config->{killrc} ) {
+      Log( LOG_INFO,  "Killing remote tmuxc instance" );
+      Log( LOG_DEBUG, \@cmd );
+      my $control = join( '-', qw(localhost), $config->{session} );
+      @cmd = buildCommand( $cli{host}, [ qw(tmuxc -h localhost -s), $config->{session}, qw(-e) ] );
+      qx(@cmd);
 
-    # Tell the remote instance to pause itself
-  } elsif ( ( $config->{pauserc} ) and ($host) ) {
-    Log( LOG_INFO,  "Pausing remote tmuxc instance" );
-    Log( LOG_DEBUG, \@cmd );
-    my $control = join( '-', qw(localhost), $config->{session} );
-    @cmd = buildCommand( $cli{host}, [ qw(tmuxc -h localhost -s), $config->{session}, qw(-p) ] );
-    qx(@cmd);
+      # Tell the remote instance to pause itself
+    } elsif ( $config->{pauserc} ) {
+      Log( LOG_INFO,  "Pausing remote tmuxc instance" );
+      Log( LOG_DEBUG, \@cmd );
+      my $control = join( '-', qw(localhost), $config->{session} );
+      @cmd = buildCommand( $cli{host}, [ qw(tmuxc -h localhost -s), $config->{session}, qw(-p) ] );
+      qx(@cmd);
+    }
   }
 
   # Check if session exists
@@ -468,13 +468,12 @@ sub LoadConfig {
     "selector"       => [qw(rofi -dmenu -i)],
     "tmux_bin"       => "tmux",
     "env_prefix"     => "TMUX_SESSION",
+    "temp"           => join( '/', ( $ENV{'HOME'}, qw(.tmuxc) ) ),
   );
 
   # Read in the config file
   if ( -e $configfile ) {
     $config = do($configfile) or die $!;
-  } else {
-    $config->{temp} = join( '/', ( $ENV{'HOME'}, qw(.tmuxc) ) );
   }
 
   # strip a trailing slash if present, thanks Brian D Foy
@@ -512,7 +511,6 @@ sub LoadConfig {
   }
 
   my $sess = $config->{session};
-  my %precedence;
 
   # Look up a number of keys that can be set at different levels
   # If no value can be found, use a sane default
@@ -520,27 +518,24 @@ sub LoadConfig {
     if ( defined( $cli{$key} ) ) {
 
       # set on the CLI
-      $precedence{$key} = $cli{$key};
+      $config->{$key} = $cli{$key};
     } elsif ( defined( $config->{hosts}{$chost}{$sess}{$key} ) ) {
 
       # Set for a specific host/session combo
-      $precedence{$key} = $config->{hosts}{$chost}{$sess}{$key};
+      $config->{$key} = $config->{hosts}{$chost}{$sess}{$key};
     } elsif ( defined( $config->{hosts}{$chost}{$key} ) ) {
 
       # Set for a specific host
-      $precedence{$key} = $config->{hosts}{$chost}{$key};
+      $config->{$key} = $config->{hosts}{$chost}{$key};
     } elsif ( defined( $config->{$key} ) ) {
 
       # Set globally in the config
-      $precedence{$key} = $config->{$key};
+      next;
     } else {
 
       # Not defined anywhere, set our fall-back default
-      $precedence{$key} = $defaultOptions{$key};
+      $config->{$key} = $defaultOptions{$key};
     }
-
-    # Set the key/value in the config hash
-    $config->{$key} = $precedence{$key};
   }
 
   # Make our temp directory and subdirectories
@@ -555,7 +550,7 @@ sub LoadConfig {
   ( $config->{hostname}, undef ) = split( /\./, hostname, 2 );
 
   # Define our control session
-  $config->{control} = join( '', ( $config->{hostname}, qw(-), $config->{session}, qw(-control) ) );
+  $config->{control} = join( '-', ( $config->{hostname}, $config->{session}, qw(control) ) );
 
   # Define our command fifo
   $config->{command} =
@@ -739,7 +734,7 @@ sub Launcher {
 }
 
 # If there's only one control session, inject a command into that FIFO
-# If there are multiple, prompt via rofi
+# If there are multiple, prompt via $config->{selector}
 
 sub InjectCommand {
   my $command = shift;
@@ -1184,11 +1179,11 @@ Create a new window for the specified tmux session on the specified host.
 
 =item B<--launcher|l>
 
-Open up a rofi menu listing sessions from the .tmuxc.conf file that aren't running.
+Open up a menu listing sessions from the .tmuxc.conf file that aren't running.
 
 =item B<--menu|m>
 
-Open up a rofi menu listing control options. If one instance is running, the command is executed on that instance. If multiple are running, prompt the running sessions.
+Open up a menu listing control options. If one instance is running, the command is executed on that instance. If multiple are running, prompt the running sessions.
 
 =item B<--exit|e>
 
