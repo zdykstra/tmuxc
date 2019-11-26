@@ -12,8 +12,8 @@ use POSIX qw ( mkfifo setsid );
 use Fcntl;
 use FindBin qw ($RealScript $RealBin);
 use File::Basename;
-use Pod::Usage;
 use Sys::Syslog qw(:standard :macros);
+use Pod::Usage qw(pod2usage);
 
 use Data::Dumper;
 $Data::Dumper::Indent   = 1;
@@ -82,13 +82,11 @@ GetOptions(
   "exit|e"        => sub { LoadConfig; InjectCommand("tmuxc KillSelf"); },
   "pause|p"       => sub { LoadConfig; InjectCommand("tmuxc PauseSelf"); },
   "raw|r=s"       => sub { my (undef, $cmd) = @_; LoadConfig; InjectCommand($cmd); },
-  "help|?"        => \$help,
+  "help|?"        => sub { pod2usage( -verbose => 2 ); exit; },
 );
 
 # Set our log_level based on verbose flags
 $cli{log_level} = $v;
-
-pod2usage( -verbose => 2 ) if $help;
 
 LoadConfig;
 
@@ -241,6 +239,10 @@ while (1) {
 
   qx(@cmd);
 
+  if ( ( $? >> 8 ) != 0 ) {
+    die "Unable to create control session, exiting";
+  }
+
   # Attach to control session in control mode
   @cmd = buildCommand( $host, [ $config->{tmux_bin}, qw(-C attach-session -t), $config->{control}, ] );
 
@@ -292,7 +294,7 @@ while (1) {
           # Execute a command directly with no required input
           $publicCommands{$1}->();
         } else {
-          Log(LOG_DEBUG, "FIFO Handler: Unknown command $1");
+          Log(LOG_INFO, "FIFO Handler: Unknown command $1");
         }
       } else {
         # everything else is assumed to be a raw tmux command
@@ -428,13 +430,11 @@ while (1) {
 }
 
 END {
-  Log(LOG_DEBUG, "END reached in $$");
   exit if $noclean;
   CleanExit;
 }
 
 sub CleanExit {
-  Log(LOG_DEBUG, "END reached in $$");
   exit if $noclean;
 
   unlink $config->{command};
