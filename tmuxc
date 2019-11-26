@@ -3,17 +3,16 @@
 use strict;
 use warnings;
 
-use Time::HiRes;
 use Getopt::Long qw(:config no_ignore_case);
-use Sys::Hostname;
-use IPC::Open2;
-use Time::HiRes qw( gettimeofday );
+use Time::HiRes qw( sleep gettimeofday );
 use POSIX qw ( mkfifo setsid );
-use Fcntl;
 use FindBin qw ($RealScript $RealBin);
-use File::Basename;
 use Sys::Syslog qw(:standard :macros);
 use Pod::Usage qw(pod2usage);
+use File::Basename;
+use Sys::Hostname;
+use IPC::Open2;
+use Fcntl;
 
 use Data::Dumper;
 $Data::Dumper::Indent   = 1;
@@ -253,20 +252,6 @@ while (1) {
 
   $pid = open2( $child_out, $child_in, @cmd );
 
-  # Seed our initial list of windows
-  print $child_in $commandText{'ListWindows'};
-
-  # Detach then spawn windows, otherwise spawn windows
-  if ($config->{detach}) {
-    print $child_in $commandText{'BulkDetach'};
-    print $child_in $commandText{'BulkSpawn'};
-    print $child_in $commandText{'ClientMap'};
-  }
-  else {
-    print $child_in $commandText{'BulkSpawn'};
-    print $child_in $commandText{'ClientMap'};
-  }
-
   # Create our command channel
   unless ( -p $config->{command} ) {
     unlink $config->{command};
@@ -302,6 +287,21 @@ while (1) {
       }
     }
   };
+
+  # Commands sent to $child_in are not processed until the main loop.
+  # The output of these commands will be read from $child_out and processed.
+
+  # Seed our initial list of windows
+  print $child_in $commandText{'ListWindows'};
+
+  # Detach any clients connected to windows
+  if ($config->{detach}) {
+    print $child_in $commandText{'BulkDetach'};
+  }
+
+  # Attach clients, force-regenerate a client map
+  print $child_in $commandText{'BulkSpawn'};
+  print $child_in $commandText{'ClientMap'};
 
   # Main event loop
   while ( my $line = <$child_out> ) {
@@ -814,6 +814,7 @@ sub InjectCommand {
 
   unless ( kill( 0, $pid ) ) {
     print "$pid not running exiting!";
+    unlink $pidfile;
     exit;
   }
 
@@ -821,11 +822,6 @@ sub InjectCommand {
   print CONTROL "$command";
   close CONTROL;
 
-  # This sleep is actually important!
-  # With out it, there's a chance the USR1 handler won't read
-  # anything from the control fifo ... fuck.
-
-  sleep 0.5;
   kill( 'USR1', $pid );
   exit;
 }
