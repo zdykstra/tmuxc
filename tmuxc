@@ -31,6 +31,7 @@ sub ListWindows;
 sub BulkDetach;
 sub BulkSpawn;
 sub ClientMap;
+sub RefreshClient;
 sub CleanExit;
 sub InstanceCheck;
 sub Launcher;
@@ -151,11 +152,12 @@ while (1) {
         $host
       ]
     );
+    Log( LOG_DEBUG, "Checking if ControlMaster for $host exists" );
+    Log( LOG_DEBUG, join( ' ', @cmd ) );
     qx(@cmd);
 
     # Master isn't running, start up a new ControlMaster
     if ( ( $? >> 8 ) != 0 ) {
-      Log( LOG_DEBUG, "ControlMaster for $host not running, creating one" );
       @cmd = buildCommand(
         undef,
         [
@@ -171,6 +173,8 @@ while (1) {
           $host
         ]
       );
+      Log( LOG_DEBUG, "ControlMaster for $host not running, creating one" );
+      Log( LOG_DEBUG, join( ' ', @cmd ) );
       qx(@cmd);
 
       if ( ( $? >> 8 ) != 0 ) {
@@ -184,24 +188,26 @@ while (1) {
 
     # Tell the remote instance to kill itself
     if ( $config->{killrc} ) {
-      Log( LOG_INFO,  "Killing remote tmuxc instance" );
-      Log( LOG_DEBUG, \@cmd );
+      Log( LOG_INFO, "Killing remote tmuxc instance" );
       my $control = join( '-', qw(localhost), $config->{session} );
       @cmd = buildCommand( $cli{host}, [ qw(tmuxc -h localhost -s), $config->{session}, qw(-e) ] );
+      Log( LOG_DEBUG, join( ' ', @cmd ) );
       qx(@cmd);
 
       # Tell the remote instance to pause itself
     } elsif ( $config->{pauserc} ) {
-      Log( LOG_INFO,  "Pausing remote tmuxc instance" );
-      Log( LOG_DEBUG, \@cmd );
+      Log( LOG_INFO, "Pausing remote tmuxc instance" );
       my $control = join( '-', qw(localhost), $config->{session} );
       @cmd = buildCommand( $cli{host}, [ qw(tmuxc -h localhost -s), $config->{session}, qw(-p) ] );
+      Log( LOG_DEBUG, join( ' ', @cmd ) );
       qx(@cmd);
     }
   }
 
   # Check if session exists
   @cmd = buildCommand( $host, [ $config->{tmux_bin}, qw(has-session -t), $config->{session}, ] );
+  Log( LOG_DEBUG, "Checking if session $config->{session} exists" );
+  Log( LOG_DEBUG, join( ' ', @cmd ) );
   qx(@cmd);
 
   # If the session doesn't exist, use the user-defined method if it exists, else make a new empty one
@@ -215,9 +221,9 @@ while (1) {
     my $initialize = $config->{hosts}{$chost}{$sess}{initialize}
       || [ $config->{tmux_bin}, qw(new-session -d -s), $sess ];
 
-    Log( LOG_INFO, "Initializing session: $sess" );
-
     @cmd = buildCommand( $host, $initialize );
+    Log( LOG_INFO,  "Initializing session: $sess" );
+    Log( LOG_DEBUG, join( ' ', @cmd ) );
     qx(@cmd);
 
     if ( ( $? >> 8 ) != 0 ) {
@@ -230,20 +236,28 @@ while (1) {
   qx(@cmd);
 
   if ( ( $? >> 8 ) == 0 ) {
-    Log( LOG_DEBUG, "Killing existing control session" );
     @cmd = buildCommand( $host, [ $config->{tmux_bin}, qw(kill-session -t), $config->{control}, ] );
+    Log( LOG_DEBUG, "Killing existing control session" );
+    Log( LOG_DEBUG, join( ' ', @cmd ) );
     qx(@cmd);
   }
 
   # Create control clone session
   @cmd = buildCommand( $host,
     [ $config->{tmux_bin}, qw(new-session -d -t), $config->{session}, qw(-s), $config->{control}, ] );
-
+  Log( LOG_DEBUG, "Creating cloned session for control mode" );
+  Log( LOG_DEBUG, join( ' ', @cmd ) );
   qx(@cmd);
 
   if ( ( $? >> 8 ) != 0 ) {
     die "Unable to create control session, exiting";
   }
+
+  # Determine the version of tmux
+  @cmd = buildCommand( $host, [ $config->{tmux_bin}, qw(-V), ] );
+  my $version = qx(@cmd);
+  ( undef, $config->{version} ) = split( ' ', $version );
+  Log( LOG_DEBUG, "tmux version $config->{version} detected" );
 
   # Attach to control session in control mode
   @cmd = buildCommand( $host, [ $config->{tmux_bin}, qw(-C attach-session -t), $config->{control}, ] );
@@ -310,7 +324,10 @@ while (1) {
   print $child_in $commandText{'BulkSpawn'};
   print $child_in $commandText{'ClientMap'};
 
-  # Main event loop
+  # Kick off a RefreshClient command to disable output if possible
+  print $child_in $commandText{'RefreshClient'};
+
+  # Main event loop - this processes lines sent over the control session
   while ( my $line = <$child_out> ) {
     next if $pause;
     next if $line =~ m/^\%output/;
@@ -572,13 +589,15 @@ sub LoadConfig {
     'BulkDetach' => "lsc -F 'BulkDetach:#{session_group},#{session_id},#{session_name},#{window_id}'\n",
     'ClientMap'  => "lsc -F 'ClientMap:#{session_group},#{session_id},#{session_name},#{window_id},#{window_name}'\n",
     'KillClient' => "kill-session -t ",
+    'RefreshClient' => "lsc -F 'RefreshClient:#{client_name},#{session_group},#{session_name}'\n",
   );
 
   %commandParse = (
-    'ListWindows' => \&ListWindows,
-    'BulkSpawn'   => \&BulkSpawn,
-    'BulkDetach'  => \&BulkDetach,
-    'ClientMap'   => \&ClientMap,
+    'ListWindows'   => \&ListWindows,
+    'BulkSpawn'     => \&BulkSpawn,
+    'BulkDetach'    => \&BulkDetach,
+    'ClientMap'     => \&ClientMap,
+    'RefreshClient' => \&RefreshClient,
   );
 
   Log( LOG_DEBUG, "Run-time configuration" );
@@ -1020,6 +1039,29 @@ sub BulkSpawn {
   Log( LOG_DEBUG, \%mapping );
 }
 
+# This handler is used to set options for attached clients
+# Currently it's a one-shot command that checks the tmux version to disable output on the control session
+sub RefreshClient {
+  my $block    = shift;
+  my $child_in = shift;
+
+  for my $entry ( @{$block} ) {
+    my ( $cname, $group, $sname ) = split( ',', $entry );
+
+    next unless $sname eq $config->{control};
+
+    # tmux 3.0 introduced the no-output flag for control mode
+    if ( int( $config->{version} ) ge 3 ) {
+      my $refresh = join( ' ', qw(refresh-client -t), $cname, qw(-F no-output) );
+      Log( LOG_DEBUG, "Disabling output for control session" );
+      Log( LOG_DEBUG, $refresh );
+      print $child_in "$refresh\n";
+    }
+
+    last;
+  }
+}
+
 # Build a map of all windows and the clients viewing the window
 # If a client was viewing a window but has been closed, mark that window as ignored
 # Future open-all commands will skip that window while the same tmuxc controller is running
@@ -1101,12 +1143,14 @@ sub Log {
   my $level = shift;
   my $entry = shift;
 
+  my ( $s, $m ) = gettimeofday;
+
   chomp($entry);
   if ( $level le $config->{log_level} ) {
     if ( $config->{log_level} == LOG_DEBUG ) {
       unless ( ref($entry) ) {
         syslog( $config->{log_level}, "%s", $entry );
-        print STDERR "## $entry\n";
+        print STDERR "## $s.$m $entry\n";
       } else {
         print STDERR Dumper($entry);
       }
