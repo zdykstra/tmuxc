@@ -34,6 +34,7 @@ sub ClientMap;
 sub RefreshClient;
 sub CleanExit;
 sub InstanceCheck;
+sub KnownSessions;
 sub Launcher;
 sub Menu;
 sub PauseSelf;
@@ -71,10 +72,11 @@ GetOptions(
   "pauserc|P"    => \$cli{pauserc},
   "reconnect|R"  => \$cli{reconnect},
   "closeas|C"    => \$cli{closeas},
-  "syslog|S=s"   => \$cli{syslog},
   "exitlast|E"   => \$cli{exitlast},
+  "print|o"      => \$cli{printOptions},
   "new|n"        => sub { LoadConfig; InjectCommand("new-window -d"); },
   "launcher|l"   => sub { LoadConfig; Launcher; },
+  "known|k:s"    => sub { my ( undef, $flag ) = @_; LoadConfig; KnownSessions($flag); },
   "menu|m"       => sub { LoadConfig; Menu; },
   "exit|e"       => sub { LoadConfig; InjectCommand("tmuxc KillSelf"); },
   "pause|p"      => sub { LoadConfig; InjectCommand("tmuxc PauseSelf"); },
@@ -600,6 +602,19 @@ sub LoadConfig {
     'RefreshClient' => \&RefreshClient,
   );
 
+  if ( defined( $cli{printOptions} ) ) {
+    foreach my $key ( sort keys %{$config} ) {
+      next if ( ref $config->{$key} eq ref {} );
+      my $ref = ref $config->{$key};
+      if ( ref $config->{$key} eq ref [] ) {
+        my $combined = join( ' ', @{ $config->{$key} } );
+        print "$key: $combined\n";
+      } else {
+        print "$key: $config->{$key}\n";
+      }
+    }
+  }
+
   Log( LOG_DEBUG, "Run-time configuration" );
   Log( LOG_DEBUG, \$config );
 }
@@ -654,6 +669,8 @@ sub InstanceCheck {
       my $running = kill( 0, $pid );
       if ($running) {
         push @{ $instances->{running} }, $session;
+        $instances->{details}{$session}{pid}     = $pid;
+        $instances->{details}{$session}{control} = $control;
       } else {
         push @{ $instances->{dead} }, $session;
       }
@@ -696,6 +713,42 @@ sub InstanceCheck {
     }
   }
   return $instances;
+}
+
+sub KnownSessions {
+  my $flag = shift;
+
+  my $instances = InstanceCheck;
+
+  if ( defined( $instances->{running} ) ) {
+    unless ( length($flag) ) {
+      print "Active: \n";
+    }
+    for ( sort @{ $instances->{running} } ) {
+      unless ( length($flag) ) {
+        print "  $_\n";
+        print "    Control: " . $instances->{details}{$_}{control} . "\n";
+        print "    PID: " . $instances->{details}{$_}{pid} . "\n";
+      } else {
+        print join( $flag, qw(active), $_, $instances->{details}{$_}{pid}, $instances->{details}{$_}{control} );
+        print "\n";
+      }
+    }
+  }
+  if ( defined( $instances->{dead} ) ) {
+    if ( $flag eq "" ) {
+      print "Inactive: \n";
+    }
+    for ( sort @{ $instances->{dead} } ) {
+      if ( $flag eq "" ) {
+        print "  $_\n";
+      } else {
+        print join( $flag, qw(inactive), $_ );
+        print "\n";
+      }
+    }
+  }
+  exit;
 }
 
 # Determine which control sessions are running, prompt for anything else
@@ -1228,6 +1281,14 @@ Open up a menu listing sessions from the .tmuxc.conf file that aren't running.
 =item B<--menu|m>
 
 Open up a menu listing control options. If one instance is running, the command is executed on that instance. If multiple are running, prompt the running sessions.
+
+=item B<--known|k> | B<--known|k=,>
+
+List active and inactive sessions. Takes an optional character argument to enable CSV output for machine parsing.
+
+=item B<--print|o>
+
+Print configuration options for the host and session selected from command line arguments.
 
 =item B<--exit|e>
 
