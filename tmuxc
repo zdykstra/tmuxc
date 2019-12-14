@@ -3,7 +3,7 @@
 use strict;
 use warnings;
 
-our $VERSION = 1.1.5;
+our $VERSION = 1.2.0;
 
 use Getopt::Long qw(:config no_ignore_case);
 use Time::HiRes qw( sleep gettimeofday );
@@ -37,7 +37,9 @@ sub RefreshClient;
 sub CleanExit;
 sub InstanceCheck;
 sub KnownSessions;
+sub OneOffSession;
 sub Launcher;
+sub LaunchNewInstance;
 sub Menu;
 sub PauseSelf;
 sub KillSelf;
@@ -76,6 +78,7 @@ GetOptions(
   "closeas|C"    => \$cli{closeas},
   "exitlast|E"   => \$cli{exitlast},
   "print|o"      => \$cli{printOptions},
+  "oneoff|S"     => sub { LoadConfig; OneOffSession; },
   "new|n"        => sub { LoadConfig; InjectCommand("new-window -d"); },
   "launcher|l"   => sub { LoadConfig; Launcher; },
   "known|k:s"    => sub { my ( undef, $flag ) = @_; LoadConfig; KnownSessions($flag); },
@@ -488,6 +491,7 @@ sub LoadConfig {
     "conn_timeout"   => 3,
     "persist"        => "10s",
     "selector"       => [qw(rofi -dmenu -i)],
+    "input_prompt"   => [qw(rofi -dmenu -p)],
     "tmux_bin"       => "tmux",
     "env_prefix"     => "TMUX_SESSION",
     "temp"           => join( '/', ( $ENV{'HOME'}, qw(.tmuxc) ) ),
@@ -625,6 +629,7 @@ sub LoadConfig {
 # Simple command dispatcher, InjectCommand picks/prompts for the session
 sub Menu {
   my %menu = (
+    'Create New Session'     => \&OneOffSession,
     'Create New Window'      => 'new-window -d',
     'Detach Session Windows' => 'tmuxc BulkDetach',
     'Kill Control Daemon'    => 'tmuxc KillSelf',
@@ -641,7 +646,35 @@ sub Menu {
   my $option = <$child_out>;
   exit unless defined($option);
   chomp($option);
-  InjectCommand( $menu{$option} );
+
+  # Check if it is a coderef and execute it
+  # This is used when we don't need to run code in another instance
+  if ( ref $menu{$option} eq ref sub { } ) {
+    $menu{$option}->();
+  } else {
+    InjectCommand( $menu{$option} );
+  }
+  exit;
+}
+
+sub OneOffSession {
+  my ( $child_out, $child_in, @prompt );
+  @prompt = @{ $config->{input_prompt} };
+  push( @prompt, "Session" );
+  my $pid = open2( $child_out, $child_in, @prompt );
+
+  print $child_in "";
+  close($child_in);
+  my $option = <$child_out>;
+  exit unless defined($option);
+  chomp($option);
+
+  my ( $session, $host ) = split( /@/, $option, 2 );
+  unless ( defined $host and length $host ) {
+    $host = 'localhost';
+  }
+
+  LaunchNewInstance( join( '@', $session, $host ), "-E" );
   exit;
 }
 
@@ -779,15 +812,26 @@ sub Launcher {
   }
   exit unless defined($response);
   chomp($response);
+  LaunchNewInstance($response);
+}
 
-  my ( $sess, $host ) = split( /@/, $response, 2 );
+# Do the double fork dance and launch a new tmuxc instance
+sub LaunchNewInstance {
+  my ( $session, $flags ) = @_;
+
+  my ( $sess, $host ) = split( /@/, $session, 2 );
   my $myself = join( '/', ( $RealBin, $RealScript ) );
+
+  $flags = "" unless ( defined $flags and length $flags );
+
   my $cmd;
   if ( $host eq "localhost" ) {
-    $cmd = join( ' ', ( $myself, qw(-s), $sess, qw(-b) ) );
+    $cmd = join( ' ', ( $myself, qw(-s), $sess, qw(-b), $flags ) );
   } else {
-    $cmd = join( ' ', ( $myself, qw(-h), $host, qw(-s), $sess, qw(-b) ) );
+    $cmd = join( ' ', ( $myself, qw(-h), $host, qw(-s), $sess, qw(-b), $flags ) );
   }
+
+  Log( LOG_DEBUG, "LaunchNewInstance: $cmd" );
 
   my $fpid = fork;
   if ( $fpid == 0 ) {
@@ -1292,6 +1336,10 @@ List active and inactive sessions. Takes an optional character argument to enabl
 =item B<--print|o>
 
 Print configuration options for the host and session selected from command line arguments.
+
+=item B<--oneoff|S>
+
+Prompt for a new session. The session can take the form of B<session> or B<session@hostname>
 
 =item B<--exit|e>
 
