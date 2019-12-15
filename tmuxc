@@ -3,7 +3,7 @@
 use strict;
 use warnings;
 
-our $VERSION = '1.2.00';
+our $VERSION = '1.2.0';
 
 use Getopt::Long qw(:config no_ignore_case);
 use Time::HiRes qw( sleep gettimeofday );
@@ -20,6 +20,10 @@ use Data::Dumper;
 $Data::Dumper::Indent   = 1;
 $Data::Dumper::Sortkeys = 1;
 $Data::Dumper::Purity   = 1;
+
+use constant REFSUB   => ref sub { };
+use constant REFHASH  => ref {};
+use constant REFARRAY => ref [];
 
 # Forward declare all subs
 sub LoadConfig;
@@ -86,7 +90,7 @@ GetOptions(
   "exit|e"       => sub { LoadConfig; InjectCommand("tmuxc KillSelf"); },
   "pause|p"      => sub { LoadConfig; InjectCommand("tmuxc PauseSelf"); },
   "raw|r=s"      => sub { my ( undef, $cmd ) = @_; LoadConfig; InjectCommand($cmd); },
-  "version|V"    => sub { printf("%s %s\n", basename($RealScript), $VERSION ); exit; },
+  "version|V"    => sub { printf( "%s %s\n", basename($RealScript), $VERSION ); exit; },
   "help|?"       => sub { pod2usage( -verbose => 2 ); exit; },
 );
 
@@ -611,9 +615,9 @@ sub LoadConfig {
 
   if ( defined( $cli{printOptions} ) ) {
     foreach my $key ( sort keys %{$config} ) {
-      next if ( ref $config->{$key} eq ref {} );
+      next if ( ref $config->{$key} eq REFHASH );
       my $ref = ref $config->{$key};
-      if ( ref $config->{$key} eq ref [] ) {
+      if ( ref $config->{$key} eq REFARRAY ) {
         my $combined = join( ' ', @{ $config->{$key} } );
         print "$key: $combined\n";
       } else {
@@ -649,7 +653,7 @@ sub Menu {
 
   # Check if it is a coderef and execute it
   # This is used when we don't need to run code in another instance
-  if ( ref $menu{$option} eq ref sub { } ) {
+  if ( ref $menu{$option} eq REFSUB ) {
     $menu{$option}->();
   } else {
     InjectCommand( $menu{$option} );
