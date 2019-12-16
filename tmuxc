@@ -41,7 +41,7 @@ sub RefreshClient;
 sub CleanExit;
 sub InstanceCheck;
 sub KnownSessions;
-sub OneOffSession;
+sub EphemeralSession;
 sub Launcher;
 sub LaunchNewInstance;
 sub Menu;
@@ -82,7 +82,7 @@ GetOptions(
   "closeas|C"    => \$cli{closeas},
   "exitlast|E"   => \$cli{exitlast},
   "print|o"      => \$cli{printOptions},
-  "oneoff|S"     => sub { LoadConfig; OneOffSession; },
+  "oneoff|S"     => sub { LoadConfig; EphemeralSession; },
   "new|n"        => sub { LoadConfig; InjectCommand("new-window -d"); },
   "launcher|l"   => sub { LoadConfig; Launcher; },
   "known|k:s"    => sub { my ( undef, $flag ) = @_; LoadConfig; KnownSessions($flag); },
@@ -633,11 +633,11 @@ sub LoadConfig {
 # Simple command dispatcher, InjectCommand picks/prompts for the session
 sub Menu {
   my %menu = (
-    'Create New Session'     => \&OneOffSession,
-    'Create New Window'      => 'new-window -d',
-    'Detach Session Windows' => 'tmuxc BulkDetach',
-    'Kill Control Daemon'    => 'tmuxc KillSelf',
-    'Open All Windows'       => 'tmuxc BulkSpawn',
+    'Create Ephemeral Session' => \&EphemeralSession,
+    'Create New Window'        => 'new-window -d',
+    'Detach Session Windows'   => 'tmuxc BulkDetach',
+    'Kill Control Daemon'      => 'tmuxc KillSelf',
+    'Open All Windows'         => 'tmuxc BulkSpawn',
   );
 
   my ( $child_out, $child_in );
@@ -661,7 +661,7 @@ sub Menu {
   exit;
 }
 
-sub OneOffSession {
+sub EphemeralSession {
   my ( $child_out, $child_in, @prompt );
   @prompt = @{ $config->{input_prompt} };
   push( @prompt, "Session" );
