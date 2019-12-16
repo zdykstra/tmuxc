@@ -5,7 +5,7 @@ use warnings;
 
 our $VERSION = '1.2.0';
 
-use Getopt::Long qw(:config no_ignore_case);
+use Getopt::Long qw(:config no_ignore_case auto_version);
 use Time::HiRes qw( sleep gettimeofday );
 use POSIX qw ( mkfifo setsid );
 use FindBin qw ($RealScript $RealBin);
@@ -41,10 +41,12 @@ sub RefreshClient;
 sub CleanExit;
 sub InstanceCheck;
 sub KnownSessions;
-sub OneOffSession;
+sub SelectSession;
+sub EphemeralSession;
 sub Launcher;
 sub LaunchNewInstance;
 sub Menu;
+sub SingleMenu;
 sub PauseSelf;
 sub KillSelf;
 sub Log;
@@ -60,7 +62,8 @@ BEGIN {
 my (
   $config, $configfile, $pause,        $v,              $noclean,
   $host,   $help,       $passcount,    %publicCommands, %defaultOptions,
-  %cli,    %mapping,    %commandParse, %commandText
+  %cli,    %mapping,    %commandParse, %commandText,    %menu,
+  %cliAction,
 );
 
 $configfile = join( '/', ( $ENV{'HOME'}, qw(.tmuxc.conf) ) );
@@ -82,16 +85,64 @@ GetOptions(
   "closeas|C"    => \$cli{closeas},
   "exitlast|E"   => \$cli{exitlast},
   "print|o"      => \$cli{printOptions},
-  "oneoff|S"     => sub { LoadConfig; OneOffSession; },
-  "new|n"        => sub { LoadConfig; InjectCommand("new-window -d"); },
-  "launcher|l"   => sub { LoadConfig; Launcher; },
-  "known|k:s"    => sub { my ( undef, $flag ) = @_; LoadConfig; KnownSessions($flag); },
-  "menu|m"       => sub { LoadConfig; Menu; },
-  "exit|e"       => sub { LoadConfig; InjectCommand("tmuxc KillSelf"); },
-  "pause|p"      => sub { LoadConfig; InjectCommand("tmuxc PauseSelf"); },
-  "raw|r=s"      => sub { my ( undef, $cmd ) = @_; LoadConfig; InjectCommand($cmd); },
-  "version|V"    => sub { printf( "%s %s\n", basename($RealScript), $VERSION ); exit; },
-  "help|?"       => sub { pod2usage( -verbose => 2 ); exit; },
+  "oneoff|S"     => sub {
+    LoadConfig;
+    EphemeralSession;
+    exit;
+  },
+  "new|n" => sub {
+    LoadConfig;
+    my $cmd         = "new-window -d";
+    my $hostsession = SelectSession($cmd);
+    InjectCommand( $cmd, $hostsession );
+    exit;
+  },
+  "launcher|l" => sub {
+    LoadConfig;
+    Launcher;
+    exit;
+  },
+  "known|k:s" => sub {
+    my ( undef, $flag ) = @_;
+    LoadConfig;
+    KnownSessions($flag);
+    exit;
+  },
+  "menu|m" => sub {
+    LoadConfig;
+    Menu;
+    exit;
+  },
+  "singlemenu|M" => sub {
+    LoadConfig;
+    SingleMenu;
+    exit;
+  },
+  "exit|e" => sub {
+    LoadConfig;
+    my $cmd         = "tmuxc KillSelf";
+    my $hostsession = SelectSession($cmd);
+    InjectCommand( $cmd, $hostsession );
+    exit;
+  },
+  "pause|p" => sub {
+    LoadConfig;
+    my $cmd         = "tmuxc PauseSelf";
+    my $hostsession = SelectSession($cmd);
+    InjectCommand( $cmd, $hostsession );
+    exit;
+  },
+  "raw|r=s" => sub {
+    my ( undef, $cmd ) = @_;
+    LoadConfig;
+    my $hostsession = SelectSession($cmd);
+    InjectCommand( $cmd, $hostsession );
+    exit;
+  },
+  "help|?" => sub {
+    pod2usage( -verbose => 2 );
+    exit;
+  },
 );
 
 # Set our log_level based on verbose flags
@@ -613,6 +664,14 @@ sub LoadConfig {
     'RefreshClient' => \&RefreshClient,
   );
 
+  %menu = (
+    'Create Ephemeral Session' => \&EphemeralSession,
+    'Create New Window'        => 'new-window -d',
+    'Detach Session Windows'   => 'tmuxc BulkDetach',
+    'Kill Control Daemon'      => 'tmuxc KillSelf',
+    'Open All Windows'         => 'tmuxc BulkSpawn',
+  );
+
   if ( defined( $cli{printOptions} ) ) {
     foreach my $key ( sort keys %{$config} ) {
       next if ( ref $config->{$key} eq REFHASH );
@@ -632,14 +691,6 @@ sub LoadConfig {
 
 # Simple command dispatcher, InjectCommand picks/prompts for the session
 sub Menu {
-  my %menu = (
-    'Create New Session'     => \&OneOffSession,
-    'Create New Window'      => 'new-window -d',
-    'Detach Session Windows' => 'tmuxc BulkDetach',
-    'Kill Control Daemon'    => 'tmuxc KillSelf',
-    'Open All Windows'       => 'tmuxc BulkSpawn',
-  );
-
   my ( $child_out, $child_in );
   my $pid = open2( $child_out, $child_in, @{ $config->{selector} } );
 
@@ -656,12 +707,60 @@ sub Menu {
   if ( ref $menu{$option} eq REFSUB ) {
     $menu{$option}->();
   } else {
-    InjectCommand( $menu{$option} );
+    my $hostsession = SelectSession( $menu{$option} );
+    InjectCommand( $menu{$option}, $hostsession );
   }
   exit;
 }
 
-sub OneOffSession {
+sub SingleMenu {
+  my $instances = InstanceCheck;
+
+  my @sessions;
+  if ( defined( $instances->{running} ) ) {
+    @sessions = @{ $instances->{running} };
+  } else {
+    exit;
+  }
+
+  my ( $child_out, $child_in );
+  my $pid = open2( $child_out, $child_in, @{ $config->{selector} } );
+
+  foreach my $key ( sort keys %menu ) {
+    next unless $key =~ m/Ephemeral/;
+    print $child_in "$key\n";
+  }
+
+  for my $hostsession ( sort @sessions ) {
+    foreach my $key ( sort keys %menu ) {
+      next if $key =~ m/Ephemeral/;
+      print $child_in "$hostsession \% $key\n";
+    }
+  }
+
+  close($child_in);
+  my $selection = <$child_out>;
+  exit unless defined($selection);
+  chomp($selection);
+
+  my ( $hostsession, $action );
+  if ( $selection =~ m/\%/ ) {
+    ( $hostsession, $action ) = split( /\ \%\ /, $selection );
+  } else {
+    $action = $selection;
+  }
+
+  # Check if it is a coderef and execute it
+  # This is used when we don't need to run code in another instance
+  if ( ref $menu{$action} eq REFSUB ) {
+    $menu{$action}->();
+  } else {
+    InjectCommand( $menu{$action}, $hostsession );
+  }
+  exit;
+}
+
+sub EphemeralSession {
   my ( $child_out, $child_in, @prompt );
   @prompt = @{ $config->{input_prompt} };
   push( @prompt, "Session" );
@@ -791,78 +890,9 @@ sub KnownSessions {
   exit;
 }
 
-# Determine which control sessions are running, prompt for anything else
-sub Launcher {
-  my ( @dead, $child_out, $child_in );
-
-  my $instances = InstanceCheck;
-
-  if ( defined( $instances->{dead} ) ) {
-    @dead = @{ $instances->{dead} };
-  }
-
-  my $response;
-  if ( scalar(@dead) > 0 ) {
-    my $pid = open2( $child_out, $child_in, @{ $config->{selector} } );
-    for (@dead) {
-      my ( $sess, $host ) = split( '@', $_, 2 );
-      print $child_in "$sess\@$host\n";
-    }
-    close($child_in);
-    $response = <$child_out>;
-    close($child_out);
-  } else {
-    exit;
-  }
-  exit unless defined($response);
-  chomp($response);
-  LaunchNewInstance($response);
-}
-
-# Do the double fork dance and launch a new tmuxc instance
-sub LaunchNewInstance {
-  my ( $session, $flags ) = @_;
-
-  my ( $sess, $host ) = split( /@/, $session, 2 );
-  my $myself = join( '/', ( $RealBin, $RealScript ) );
-
-  $flags = "" unless ( defined $flags and length $flags );
-
-  my $cmd;
-  if ( $host eq "localhost" ) {
-    $cmd = join( ' ', ( $myself, qw(-s), $sess, qw(-b), $flags ) );
-  } else {
-    $cmd = join( ' ', ( $myself, qw(-h), $host, qw(-s), $sess, qw(-b), $flags ) );
-  }
-
-  Log( LOG_DEBUG, "LaunchNewInstance: $cmd" );
-
-  my $fpid = fork;
-  if ( $fpid == 0 ) {
-    exit 255 unless open STDIN,  '/dev/null';
-    exit 255 unless open STDOUT, '>/dev/null';
-    exit 255 unless open STDERR, '>/dev/null';
-    setsid();
-    $fpid = fork;
-    if ( $fpid == 0 ) {
-      $noclean = 0;
-      exec($cmd);
-    }
-    $noclean = 1;
-    exit;
-  }
-  waitpid( $fpid, 0 );
-  $noclean = 1;
-  exit;
-}
-
-# If there's only one control session, inject a command into that FIFO
-# If there are multiple, prompt via $config->{selector}
-
-sub InjectCommand {
+# Optionally requires a command, as this can influence the behavior
+sub SelectSession {
   my $command = shift;
-
-  Log( LOG_DEBUG, "InjectCommand: $command" );
 
   my $instances = InstanceCheck;
 
@@ -938,6 +968,77 @@ sub InjectCommand {
     Log( LOG_NOTICE, "No running sessions" );
     exit;
   }
+  return $session;
+}
+
+# Determine which control sessions are running, prompt for anything else
+sub Launcher {
+  my ( @dead, $child_out, $child_in );
+
+  my $instances = InstanceCheck;
+
+  if ( defined( $instances->{dead} ) ) {
+    @dead = @{ $instances->{dead} };
+  }
+
+  my $response;
+  if ( scalar(@dead) > 0 ) {
+    my $pid = open2( $child_out, $child_in, @{ $config->{selector} } );
+    for (@dead) {
+      my ( $sess, $host ) = split( '@', $_, 2 );
+      print $child_in "$sess\@$host\n";
+    }
+    close($child_in);
+    $response = <$child_out>;
+    close($child_out);
+  } else {
+    exit;
+  }
+  exit unless defined($response);
+  chomp($response);
+  LaunchNewInstance($response);
+}
+
+# Do the double fork dance and launch a new tmuxc instance
+sub LaunchNewInstance {
+  my ( $session, $flags ) = @_;
+
+  my ( $sess, $host ) = split( /@/, $session, 2 );
+  my $myself = join( '/', ( $RealBin, $RealScript ) );
+
+  $flags = "" unless ( defined $flags and length $flags );
+
+  my $cmd;
+  if ( $host eq "localhost" ) {
+    $cmd = join( ' ', ( $myself, qw(-s), $sess, qw(-b), $flags ) );
+  } else {
+    $cmd = join( ' ', ( $myself, qw(-h), $host, qw(-s), $sess, qw(-b), $flags ) );
+  }
+
+  Log( LOG_DEBUG, "LaunchNewInstance: $cmd" );
+
+  my $fpid = fork;
+  if ( $fpid == 0 ) {
+    exit 255 unless open STDIN,  '/dev/null';
+    exit 255 unless open STDOUT, '>/dev/null';
+    exit 255 unless open STDERR, '>/dev/null';
+    setsid();
+    $fpid = fork;
+    if ( $fpid == 0 ) {
+      $noclean = 0;
+      exec($cmd);
+    }
+    $noclean = 1;
+    exit;
+  }
+  waitpid( $fpid, 0 );
+  $noclean = 1;
+  exit;
+}
+
+# Given a session@host, inject a command into the FIFO and send a USR1 signal
+sub InjectCommand {
+  my ( $command, $session ) = @_;
 
   my $control =
     join( '', ( $config->{temp}, qw(control/), $session, ".control" ) );
