@@ -139,7 +139,6 @@ GetOptions(
     exit;
   },
 );
-
 # Adjust our log level based on one or more -v's
 $cli{log_level} = $v;
 
