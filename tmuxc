@@ -733,24 +733,18 @@ sub Menu {
 
   my ( $hostsession, $action );
 
-  # Break apart single-page lines
+  # Single page action menu
   if ( $selection =~ m/\%/ ) {
     ( $hostsession, $action ) = split( /\ \%\ /, $selection );
-  } else {
-
-    # Record our action, invoke a session selector
-    $action      = $selection;
-    $hostsession = SelectSession( $menu{$action} );
-  }
-
-  # Check if it is a coderef and execute it
-  # This is used when we don't need to run code in another instance
-  if ( ref $menu{$action} eq REFSUB ) {
-    $menu{$action}->();
-  } else {
     InjectCommand( $menu{$action}, $hostsession );
+  } elsif ( ref $menu{$selection} eq REFSUB ) {
+    # reference to a sub, just execute it
+    $menu{$selection}->();
+  } else {
+    # Menu option to do an action on an unspecified session
+    $hostsession = SelectSession( $menu{$selection} );
+    InjectCommand( $menu{$selection}, $hostsession );
   }
-  exit;
 }
 
 sub EphemeralSession {
