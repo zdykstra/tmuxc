@@ -571,6 +571,7 @@ sub LoadConfig {
     "tmux_bin"       => "tmux",
     "env_prefix"     => "TMUX_SESSION",
     "temp"           => join( '/', ( $ENV{'HOME'}, qw(.tmuxc) ) ),
+    "skipnw"         => 0,
   );
 
   # Read in the config file
