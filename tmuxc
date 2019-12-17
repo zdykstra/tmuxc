@@ -65,11 +65,27 @@ my (
   %commandParse, %commandText, %menu,           $cliAction,
 );
 
-$configfile = join( '/', ( $ENV{'HOME'}, qw(.tmuxc.conf) ) );
-$noclean    = 1;
-$v          = LOG_NOTICE;
-$pause      = 0;
-$passcount  = 0;
+# Looking for configs in all the right places
+my @configtests = (
+  join( '/', ( $ENV{'HOME'}, qw(.tmuxc.conf) ) ),
+  join( '/', ( $ENV{'HOME'}, qw(.config/tmuxc.conf) ) ),
+  join( '/', ( $ENV{'HOME'}, qw(.config/tmuxc/tmuxc.conf) ) ),
+);
+
+foreach (@configtests) {
+  if (-f) {
+    $configfile = $_;
+  }
+}
+
+unless ( length $configfile ) {
+  $configfile = $configtests[0];
+}
+
+$noclean   = 1;
+$v         = LOG_NOTICE;
+$pause     = 0;
+$passcount = 0;
 
 GetOptions(
   "host|h=s"     => \$cli{host},
@@ -139,6 +155,7 @@ GetOptions(
     exit;
   },
 );
+
 # Adjust our log level based on one or more -v's
 $cli{log_level} = $v;
 
@@ -739,9 +756,11 @@ sub Menu {
     ( $hostsession, $action ) = split( /\ \%\ /, $selection );
     InjectCommand( $menu{$action}, $hostsession );
   } elsif ( ref $menu{$selection} eq REFSUB ) {
+
     # reference to a sub, just execute it
     $menu{$selection}->();
   } else {
+
     # Menu option to do an action on an unspecified session
     $hostsession = SelectSession( $menu{$selection} );
     InjectCommand( $menu{$selection}, $hostsession );
