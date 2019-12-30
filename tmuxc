@@ -349,7 +349,7 @@ while (1) {
   Log( LOG_DEBUG, "tmux version $config->{version} detected" );
 
   # Attach to control session in control mode
-  @cmd = buildCommand( $host, [ $config->{tmux_bin}, qw(-C attach-session -t), $config->{control}, ] );
+  @cmd = buildCommand( $host, [ $config->{tmux_bin}, qw(-C attach -t), $config->{control}, ] );
 
   my $sess = $config->{session};
   my ( $pid, $child_out, $child_in );
@@ -446,6 +446,14 @@ while (1) {
       next;
     }
 
+    # We messed up somewhere, reset the stack and carry on
+    if ( $line =~ m/^\%error/ ) {
+      Log( LOG_DEBUG, \@block );
+      $blockCapture = 0;
+      $function     = undef;
+      @block        = ();
+    }
+
     # Push the line to the current block
     if ($blockCapture) {
       ( $function, $result ) = split( /:/, $line );
@@ -457,6 +465,7 @@ while (1) {
     # This event produces a TON of spam
     # Linked sessions result in every session producing this, with out saying where it comes from
     # Multiple conditions are used to keep from spawning an infinite sequence of windows
+    # %window-add @101
     if ( $line =~ m/^\%window-add\s(\@\d+)/ ) {
       if ( exists $mapping{windows}{$1}{'pending'} ) {
 
@@ -485,7 +494,7 @@ while (1) {
     }
 
     # Update our internal knowledge of the window name
-    # Currently not really useful ...
+    # %window-renamed @29 fish
     if ( $line =~ m/^\%window-renamed\s(@\d+)\s(.*)/ ) {
       Log( LOG_DEBUG, "Running $commandText{'ListWindows'}" );
       print $child_in $commandText{'ListWindows'};
@@ -493,6 +502,7 @@ while (1) {
     }
 
     # Update our client <> window map - two clients likely point to a single window
+    # %session-window-changed $92 @115
     if ( $line =~ m/^\%session-window-changed\s(\$\d+)\s(\@\d+)/ ) {
       Log( LOG_DEBUG, "Running $commandText{'ClientMap'}" );
       print $child_in $commandText{'ClientMap'};
@@ -501,28 +511,38 @@ while (1) {
 
     # Produced when a client attaches to a session,
     # %client-session-changed /dev/pts/10 $163 penthe-global-session-1545894242-319412-45
-    # This is probably a useless event to process
     if ( $line =~ m/^\%client-session-changed\s(.*)\s(\$\d+)\s([\w-]+)/ ) {
       Log( LOG_DEBUG, "Running $commandText{'ClientMap'}" );
       print $child_in $commandText{'ClientMap'};
       next;
     }
 
-    # Produced when a client attaches or detaches
-    # This is probably a useless event to process
-    if ( $line =~ m/^%sessions-changed/ ) {
+    # Produced when a client attaches or detaches (xterm is killed)
+    # %sessions-changed
+    if ( $line =~ m/^\%sessions-changed/ ) {
       Log( LOG_DEBUG, "Running $commandText{'ClientMap'}" );
       print $child_in $commandText{'ClientMap'};
       next;
     }
 
-    # Produced when a window is closed, e.g. exit from a shell
+    # This event is fired once for each window in a session when a terminal (xterm, etc) is killed
+    # Since it doesn't contain any other actionable values, it's unusable
+    # %window-close @101
+    if ( $line =~ m/^\%window-close\s(@\d+)/ ) {
+      next;
+    }
+
+    # Produced when the process in a tmux window ends
     # Kill all attached sessions viewing that window
-    if ( $line =~ m/^%unlinked-window-close\s(@\d+)/ ) {
+    # %unlinked-window-close @95
+    if ( $line =~ m/^\%unlinked-window-close\s(@\d+)/ ) {
+
+      # skip this if it doesn't exist in our mapping
+      # it came from another session group
       next unless exists $mapping{clients}{$1};
       while ( @{ $mapping{clients}{$1} } ) {
         my $client = pop @{ $mapping{clients}{$1} };
-        Log( LOG_DEBUG, "Killing session $client, window $1 close" );
+        Log( LOG_DEBUG, "Killing session $client, window $1 closed" );
         print $child_in $commandText{'KillClient'} . "$client\n";
       }
       delete $mapping{clients}{$1};
@@ -1118,17 +1138,12 @@ sub spawnTerm {
   my ( $sec,  $usec ) = gettimeofday();
   my $clone_session = $config->{hostname} . "-$session-$sec-$usec-$id";
 
-  my @cmd = buildCommand( $host, [ $config->{tmux_bin}, qw(new-session -d -t), $session, qw(-s), $clone_session, ] );
+  my @cmd = buildCommand( $host,
+    [ $config->{tmux_bin}, qw(new-session -d -t), $session, qw(-s), $clone_session, qw(\; select-window -t), $window, ]
+  );
   my $clone_command = join( ' ', @cmd );
 
-  @cmd = buildCommand(
-    $host,
-    [
-      $config->{tmux_bin},     qw(attach-session -t),
-      $clone_session,          qw(\; set-option destroy-unattached on),
-      qw(\; select-window -t), $window,
-    ]
-  );
+  @cmd = buildCommand( $host, [ $config->{tmux_bin}, qw(attach -t), $clone_session, ] );
   my $attach_command = join( ' ', @cmd );
 
   my $script       = join( '', ( $config->{temp}, $clone_session ) );
@@ -1272,7 +1287,8 @@ sub RefreshClient {
     next unless $sname eq $config->{control};
 
     # tmux 3.0 introduced the no-output flag for control mode
-    if ( int( $config->{version} ) ge 3 ) {
+    my ( $major, undef ) = split( '.', $config->{version} );
+    if ( $major ge 3 ) {
       my $refresh = join( ' ', qw(refresh-client -t), $cname, qw(-F no-output) );
       Log( LOG_DEBUG, "Disabling output for control session" );
       Log( LOG_DEBUG, $refresh );
@@ -1321,10 +1337,22 @@ sub ClientMap {
     push @found_windows, $wid;
   }
 
+  # Ignore windows that were closed
   foreach my $window ( keys %{ $previous{clients} } ) {
     unless ( defined( $mapping{clients}{$window} ) ) {
       Log( LOG_INFO, "Setting ignore flag for $window" );
       $mapping{windows}{$window}{ignore} = 1;
+    }
+  }
+
+  # Set options for newly attached windows
+  # This should possibly be handled somewhere else?
+  foreach my $client ( keys %{ $mapping{clients} } ) {
+    unless ( defined( $previous{clients}{$client} ) ) {
+      # It's critical that this be done AFTER a client has attached to a session
+      # If it is done before, the session will be destroyed
+      print $child_in "set-option -t $client destroy-unattached on\n";
+      Log( LOG_DEBUG, "Setting destroy-unattached on for $client" );
     }
   }
 
