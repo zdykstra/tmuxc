@@ -213,7 +213,12 @@ close PID;
 # Disable the noclean flag, now that we've written a PID to disk
 $noclean = 0;
 
-Log( LOG_NOTICE, "tmuxc running as PID $$" );
+Log( LOG_NOTICE, "$RealScript running as PID $$" );
+
+# Set our proc entry to tmuxc session@host
+if ( $config->{prettyps} ) {
+  $0 = sprintf( "%s %s@%s", $RealScript, $config->{session}, $config->{chost} );
+}
 
 # Export our session name as an environment variable
 my $session_env = join( '_', $config->{env_prefix}, "NAME" );
@@ -572,6 +577,7 @@ sub LoadConfig {
     "env_prefix"     => "TMUX_SESSION",
     "temp"           => join( '/', ( $ENV{'HOME'}, qw(.tmuxc) ) ),
     "skipnw"         => 0,
+    "prettyps"       => 1,
   );
 
   # Read in the config file
