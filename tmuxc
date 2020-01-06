@@ -857,8 +857,8 @@ sub InstanceCheck {
   my @controls = glob($cglob);
 
   for my $control (@controls) {
-    my $filename = basename($control);
-    $filename =~ s/\.control//;
+    my $session = basename($control);
+    $session =~ s/\.control//;
 
     my $pidfile = $control;
     $pidfile =~ s/control/pid/g;
@@ -870,8 +870,10 @@ sub InstanceCheck {
 
       my $running = kill( 0, $pid );
       if ($running) {
-        unless ( grep { $_ eq $filename } @{ $instances->{running} } ) {
-          push @{ $instances->{running} }, $filename;
+        unless ( grep { $_ eq $session } @{ $instances->{running} } ) {
+          push @{ $instances->{running} }, $session;
+          $instances->{details}{$session}{pid}     = $pid;
+          $instances->{details}{$session}{control} = $control;
         }
       } else {
 
@@ -1349,6 +1351,7 @@ sub ClientMap {
   # This should possibly be handled somewhere else?
   foreach my $client ( keys %{ $mapping{clients} } ) {
     unless ( defined( $previous{clients}{$client} ) ) {
+
       # It's critical that this be done AFTER a client has attached to a session
       # If it is done before, the session will be destroyed
       print $child_in "set-option -t $client destroy-unattached on\n";
