@@ -843,8 +843,9 @@ sub InstanceCheck {
       if ($running) {
         Log( LOG_DEBUG, "Running session: $session" );
         push @{ $instances->{running} }, $session;
-        $instances->{details}{$session}{pid}     = $pid;
-        $instances->{details}{$session}{control} = $control;
+        $instances->{details}{$session}{pid}       = $pid;
+        $instances->{details}{$session}{control}   = $control;
+        $instances->{details}{$session}{ephemeral} = 0;
       } else {
         push @{ $instances->{dead} }, $session;
       }
@@ -872,8 +873,9 @@ sub InstanceCheck {
       if ($running) {
         unless ( grep { $_ eq $session } @{ $instances->{running} } ) {
           push @{ $instances->{running} }, $session;
-          $instances->{details}{$session}{pid}     = $pid;
-          $instances->{details}{$session}{control} = $control;
+          $instances->{details}{$session}{pid}       = $pid;
+          $instances->{details}{$session}{control}   = $control;
+          $instances->{details}{$session}{ephemeral} = 1;
         }
       } else {
 
@@ -902,7 +904,12 @@ sub KnownSessions {
     }
     for ( sort @{ $instances->{running} } ) {
       unless ( length($flag) ) {
-        print "  $_\n";
+        print "  $_";
+        if ( $instances->{details}{$_}{ephemeral} ) {
+          print " (ephemeral)\n";
+        } else {
+          print "\n";
+        }
         print "    Control: " . $instances->{details}{$_}{control} . "\n";
         print "    PID: " . $instances->{details}{$_}{pid} . "\n";
       } else {
