@@ -438,7 +438,7 @@ fi
         $mapping{windows}{$1}{'pending'} = 1;
         print $child_in $commandText{'ListWindows'};
         Log( LOG_DEBUG, "window-add: Spawning a terminal for $1" );
-        spawnTerm( $host, $sess, $1 );
+        spawnTerm( $host, $sess, $1, $child_in );
         next;
       }
     }
@@ -1092,25 +1092,22 @@ sub buildCommand {
 
 # Write out a custom shell script and launch it with our terminal
 sub spawnTerm {
-  my ( $host, $session, $window ) = @_;
+  my ( $host, $session, $window, $child_in ) = @_;
   my ( undef, $id )   = split( '@', $window );
-  my ( $sec,  $usec ) = gettimeofday();
 
   my $clone_session = join( '/', ( qw(tmuxc), $config->{hostname}, $session, $id ) );
 
-  my @cmd = buildCommand( $host,
-    [ $config->{tmux_bin}, qw(new-session -d -t), $session, qw(-s), $clone_session, qw(\; select-window -t), $window, ]
-  );
-  my $clone_command = join( ' ', @cmd );
+  my $clone_command = join( ' ', ( qw(new-session -d -t), $session, qw(-s), $clone_session, qw(; select-window -t), $window, "\n" ) );
+  print Log( LOG_DEBUG, $clone_command);
+  print $child_in $clone_command;
 
-  @cmd = buildCommand( $host, [ $config->{tmux_bin}, qw(attach -t), $clone_session, ] );
+  my @cmd = buildCommand( $host, [ $config->{tmux_bin}, qw(attach -t), $clone_session, ] );
   my $attach_command = join( ' ', @cmd );
 
   $clone_session =~ s/\//-/g;
   my $script       = join( '', ( $config->{temp}, $clone_session ) );
   my $start_script = qq|#!/bin/sh
 test -f $script && rm $script
-$clone_command
 exec $attach_command
 |;
 
@@ -1228,7 +1225,7 @@ sub BulkSpawn {
         Log( LOG_INFO, "Spawning a terminal for $window" );
         delete $mapping{clients}{$window};
         $mapping{windows}{$window}{'pending'} = 1;
-        spawnTerm( $host, $config->{session}, $window );
+        spawnTerm( $host, $config->{session}, $window, $child_in );
       }
     }
   }
