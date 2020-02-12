@@ -25,32 +25,6 @@ use constant REFSUB   => ref sub { };
 use constant REFHASH  => ref {};
 use constant REFARRAY => ref [];
 
-# Forward declare all subs
-sub LoadConfig;
-sub InjectCommand;
-sub shellQuote;
-sub buildCommandRefArray;
-sub buildCommand;
-sub spawnTerm;
-sub checkIfBlacklisted;
-sub ListWindows;
-sub BulkDetach;
-sub BulkSpawn;
-sub ClientMap;
-sub RefreshClient;
-sub CleanExit;
-sub InstanceCheck;
-sub KnownSessions;
-sub SelectSession;
-sub EphemeralSession;
-sub Launcher;
-sub LaunchNewInstance;
-sub Menu;
-sub SingleMenu;
-sub PauseSelf;
-sub KillSelf;
-sub Log;
-
 # Add signal handlers, load our config on start
 BEGIN {
   $SIG{INT}  = \&CleanExit;
@@ -94,8 +68,6 @@ GetOptions(
   "config|c=s"   => \$configfile,
   "detach|d"     => \$cli{detach},
   "verbose|v+"   => \$v,
-  "killrc|k"     => \$cli{killrc},
-  "pauserc|P"    => \$cli{pauserc},
   "reconnect|R"  => \$cli{reconnect},
   "closeas|C"    => \$cli{closeas},
   "exitlast|E"   => \$cli{exitlast},
@@ -274,84 +246,62 @@ while (1) {
         }
       }
     }
-
-    # Tell the remote instance to kill itself
-    if ( $config->{killrc} ) {
-      Log( LOG_INFO, "Killing remote tmuxc instance" );
-      my $control = join( '-', qw(localhost), $config->{session} );
-      @cmd = buildCommand( $cli{host}, [ qw(tmuxc -h localhost -s), $config->{session}, qw(-e) ] );
-      Log( LOG_DEBUG, join( ' ', @cmd ) );
-      qx(@cmd);
-
-      # Tell the remote instance to pause itself
-    } elsif ( $config->{pauserc} ) {
-      Log( LOG_INFO, "Pausing remote tmuxc instance" );
-      my $control = join( '-', qw(localhost), $config->{session} );
-      @cmd = buildCommand( $cli{host}, [ qw(tmuxc -h localhost -s), $config->{session}, qw(-p) ] );
-      Log( LOG_DEBUG, join( ' ', @cmd ) );
-      qx(@cmd);
-    }
   }
 
-  # Check if session exists
-  @cmd = buildCommand( $host, [ $config->{tmux_bin}, qw(has-session -t), $config->{session}, ] );
-  Log( LOG_DEBUG, "Checking if session $config->{session} exists" );
-  Log( LOG_DEBUG, join( ' ', @cmd ) );
-  qx(@cmd);
+  my $chost = $config->{chost};
+  my $sess  = $config->{session};
 
-  # If the session doesn't exist, use the user-defined method if it exists, else make a new empty one
-  if ( ( $? >> 8 ) != 0 ) {
+  my $initialize = $config->{hosts}{$chost}{$sess}{initialize}
+    || [ $config->{tmux_bin}, qw(new-session -d -s), $sess ];
+  $initialize = join( ' ', @{$initialize} );
 
-    # Second time through the loop and our session doesn't exist, so exit instead of creating a new session
-    last if ( ( $config->{exitlast} ) and ($passcount) );
+  my $control = join( '/', $config->{chost}, $config->{control} );
+  $control =~ s/\//-/g;
 
-    my $chost      = $config->{chost};
-    my $sess       = $config->{session};
-    my $initialize = $config->{hosts}{$chost}{$sess}{initialize}
-      || [ $config->{tmux_bin}, qw(new-session -d -s), $sess ];
+  my $script = join( '', ( $config->{temp}, $control ) );
 
-    @cmd = buildCommand( $host, $initialize );
-    Log( LOG_INFO,  "Initializing session: $sess" );
-    Log( LOG_DEBUG, join( ' ', @cmd ) );
-    qx(@cmd);
+  my $setup_script = qq|
+exec 2>/dev/null
 
-    if ( ( $? >> 8 ) != 0 ) {
-      die "Session initilization failed, exiting";
-    }
+if ! $config->{tmux_bin} has-session -t $config->{session}; then
+  $initialize
+fi
+
+if ! $config->{tmux_bin} has-session -t $config->{control}; then
+  $config->{tmux_bin} new-session -d -t $config->{session} -s $config->{control}
+fi
+
+if VERSION="\$( $config->{tmux_bin} -V )"; then
+  echo "\${VERSION}"
+else
+  echo "tmux unknown"
+fi
+|;
+
+  open SCRIPT, '>', $script;
+  print SCRIPT $setup_script;
+  close SCRIPT;
+
+  chmod 0700, $script;
+
+  Log( LOG_DEBUG, "Created setup script $script" );
+
+  if ($host) {
+    @cmd = buildCommand( $host, [qw(sh)] );
+    push( @cmd, "< $script" );
+  } else {
+    @cmd = buildCommand( undef, [$script] );
   }
 
-  # Check if control session exists
-  @cmd = buildCommand( $host, [ $config->{tmux_bin}, qw(has-session -t), $config->{control}, ] );
-  qx(@cmd);
+  my $setup_response = qx(@cmd);
+  unlink $script;
 
-  if ( ( $? >> 8 ) == 0 ) {
-    @cmd = buildCommand( $host, [ $config->{tmux_bin}, qw(kill-session -t), $config->{control}, ] );
-    Log( LOG_DEBUG, "Killing existing control session" );
-    Log( LOG_DEBUG, join( ' ', @cmd ) );
-    qx(@cmd);
-  }
-
-  # Create control clone session
-  @cmd = buildCommand( $host,
-    [ $config->{tmux_bin}, qw(new-session -d -t), $config->{session}, qw(-s), $config->{control}, ] );
-  Log( LOG_DEBUG, "Creating cloned session for control mode" );
-  Log( LOG_DEBUG, join( ' ', @cmd ) );
-  qx(@cmd);
-
-  if ( ( $? >> 8 ) != 0 ) {
-    die "Unable to create control session, exiting";
-  }
-
-  # Determine the version of tmux
-  @cmd = buildCommand( $host, [ $config->{tmux_bin}, qw(-V), ] );
-  my $version = qx(@cmd);
-  ( undef, $config->{version} ) = split( ' ', $version );
+  ( undef, $config->{version} ) = split( ' ', $setup_response );
   Log( LOG_DEBUG, "tmux version $config->{version} detected" );
 
   # Attach to control session in control mode
   @cmd = buildCommand( $host, [ $config->{tmux_bin}, qw(-C attach -t), $config->{control}, ] );
 
-  my $sess = $config->{session};
   my ( $pid, $child_out, $child_in );
   my $blockCapture = 0;
   my ( @block, $function, $result );
@@ -679,7 +629,7 @@ sub LoadConfig {
   ( $config->{hostname}, undef ) = split( /\./, hostname, 2 );
 
   # Define our control session
-  $config->{control} = join( '-', ( $config->{hostname}, $config->{session}, qw(control) ) );
+  $config->{control} = join( '/', ( qw(tmuxc), $config->{session}, qw(control) ) );
 
   # Define our command fifo
   $config->{command} =
@@ -747,7 +697,7 @@ sub Menu {
       print $child_in "$item\n";
     }
   } elsif ( $mode eq "single" ) {
-    my $instances = InstanceCheck;
+    my $instances = InstanceCheck();
 
     my @sessions;
     if ( defined( $instances->{running} ) ) {
@@ -1145,7 +1095,8 @@ sub spawnTerm {
   my ( $host, $session, $window ) = @_;
   my ( undef, $id )   = split( '@', $window );
   my ( $sec,  $usec ) = gettimeofday();
-  my $clone_session = $config->{hostname} . "-$session-$sec-$usec-$id";
+
+  my $clone_session = join( '/', ( qw(tmuxc), $config->{hostname}, $session, $id ) );
 
   my @cmd = buildCommand( $host,
     [ $config->{tmux_bin}, qw(new-session -d -t), $session, qw(-s), $clone_session, qw(\; select-window -t), $window, ]
@@ -1155,6 +1106,7 @@ sub spawnTerm {
   @cmd = buildCommand( $host, [ $config->{tmux_bin}, qw(attach -t), $clone_session, ] );
   my $attach_command = join( ' ', @cmd );
 
+  $clone_session =~ s/\//-/g;
   my $script       = join( '', ( $config->{temp}, $clone_session ) );
   my $start_script = qq|#!/bin/sh
 test -f $script && rm $script
@@ -1165,7 +1117,7 @@ exec $attach_command
   open SCRIPT, '>', $script;
   print SCRIPT $start_script;
   close SCRIPT;
-  chmod 0755, $script;
+  chmod 0700, $script;
 
   my @exec = @{ $config->{terminal} };
   push @exec, $script;
@@ -1459,10 +1411,6 @@ After connecting to a host and instance, detach any clients connected to the ses
 =item B<--verbose|v>
 
 Enable verbose/debugging mode to print extra details.
-
-=item B<--killrc|k>
-
-After connecting to a remote host, kill the remote tmuxc instance monitoring our session.
 
 =item B<--reconnect|R>
 
