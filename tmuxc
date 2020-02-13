@@ -527,8 +527,6 @@ sub LoadConfig {
 
   %defaultOptions = (
     "detach"         => 0,
-    "killrc"         => 0,
-    "pauserc"        => 0,
     "reconnect"      => 1,
     "closeas"        => 0,
     "background"     => 0,
@@ -682,6 +680,7 @@ sub LoadConfig {
         print "$key: $config->{$key}\n";
       }
     }
+    exit;
   }
 }
 
@@ -1432,6 +1431,10 @@ Open up a menu listing sessions from the .tmuxc.conf file that aren't running.
 =item B<--menu|m>
 
 Open up a menu listing control options. If one instance is running, the command is executed on that instance. If multiple are running, prompt the running sessions.
+
+=item B<--singlemenu|M>
+
+Open up a menu listing control options. The options take the form of session@host % <action>, and are shown as a single-depth menu. Smart pagers (rofi, bemenu, etc) allow you to type partial words in any order to narrow down the option to execute.
 
 =item B<--known|k> | B<--known|k=,>
 
