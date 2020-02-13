@@ -1,2 +1,0 @@
-tmux new-session -d -t global-session -s tmuxc/meluan/global-session/0 \; select-window -t @0
-tmux attach -t tmuxc/meluan/global-session/0
