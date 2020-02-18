@@ -72,6 +72,7 @@ GetOptions(
   "closeas|C"    => \$cli{closeas},
   "exitlast|E"   => \$cli{exitlast},
   "print|o"      => \$cli{printOptions},
+  "swm|w"        => \$cli{swm},
   "ephemeral|S"  => sub {
     $cliAction = \&EphemeralSession;
   },
@@ -348,160 +349,168 @@ fi
     }
   };
 
-  # Commands sent to $child_in are not processed until the main loop.
-  # The output of these commands will be read from $child_out and processed.
+  # Single Window Mode short-circuits the entire control mode processing loop
 
-  # Seed our initial list of windows
-  print $child_in $commandText{'ListWindows'};
+  if ( $config->{swm} ) {
+    spawnSingleTerm( $host, $config->{control}, $child_in );
+  } else {
 
-  # Detach any clients connected to windows
-  if ( $config->{detach} ) {
-    print $child_in $commandText{'BulkDetach'};
-  }
+    # Commands sent to $child_in are not processed until the main loop.
+    # The output of these commands will be read from $child_out and processed.
+    #
+    # Seed our initial list of windows
+    print $child_in $commandText{'ListWindows'};
 
-  # Attach clients, force-regenerate a client map
-  print $child_in $commandText{'BulkSpawn'};
-  print $child_in $commandText{'ClientMap'};
-
-  # Kick off a RefreshClient command to disable output if possible
-  print $child_in $commandText{'RefreshClient'};
-
-  # Main event loop - this processes lines sent over the control session
-  while ( my $line = <$child_out> ) {
-    next if $pause;
-    next if $line =~ m/^\%output/;
-    $line =~ s/\r\n/\n/g;
-    Log( LOG_DEBUG, "$line" );
-
-    # Trigger block capture mode
-    if ( $line =~ m/^\%begin/ ) {
-      $blockCapture = 1;
-      next;
+    # Detach any clients connected to windows
+    if ( $config->{detach} ) {
+      print $child_in $commandText{'BulkDetach'};
     }
 
-    # Blocks can end with either end or error
-    if ( $line =~ m/^\%end/ ) {
-      $blockCapture = 0;
-      next unless defined($function);
-      Log( LOG_DEBUG, "Captured $function block" );
+    # Attach clients, force-regenerate a client map
+    print $child_in $commandText{'BulkSpawn'};
+    print $child_in $commandText{'ClientMap'};
 
-      my $cmd = $function;
-      if ( exists( $commandParse{$cmd} ) ) {
-        $commandParse{$cmd}->( \@block, $child_in );
-      } else {
-        Log( LOG_DEBUG, "No handler for $cmd" );
+    # Kick off a RefreshClient command to disable output if possible
+    print $child_in $commandText{'RefreshClient'};
+
+    # Main event loop - this processes lines sent over the control session
+    while ( my $line = <$child_out> ) {
+      next if $pause;
+      next if $line =~ m/^\%output/;
+      $line =~ s/\r\n/\n/g;
+      Log( LOG_DEBUG, "$line" );
+
+      # Trigger block capture mode
+      if ( $line =~ m/^\%begin/ ) {
+        $blockCapture = 1;
+        next;
       }
-      @block    = ();
-      $function = undef;
-      next;
-    }
 
-    # We messed up somewhere, reset the stack and carry on
-    if ( $line =~ m/^\%error/ ) {
-      Log( LOG_DEBUG, \@block );
-      $blockCapture = 0;
-      $function     = undef;
-      @block        = ();
-    }
+      # Blocks can end with either end or error
+      if ( $line =~ m/^\%end/ ) {
+        $blockCapture = 0;
+        next unless defined($function);
+        Log( LOG_DEBUG, "Captured $function block" );
 
-    # Push the line to the current block
-    if ($blockCapture) {
-      ( $function, $result ) = split( /:/, $line );
-      chomp($result);
-      push @block, $result;
-      next;
-    }
-
-    # This event produces a TON of spam
-    # Linked sessions result in every session producing this, with out saying where it comes from
-    # Multiple conditions are used to keep from spawning an infinite sequence of windows
-    # %window-add @101
-    if ( $line =~ m/^\%window-add\s(\@\d+)/ ) {
-      if ( exists $mapping{windows}{$1}{'pending'} ) {
-
-        # This is removed only by spawnTerm
-        Log( LOG_DEBUG, "Skipping window-add: Session pending for $1" );
+        my $cmd = $function;
+        if ( exists( $commandParse{$cmd} ) ) {
+          $commandParse{$cmd}->( \@block, $child_in );
+        } else {
+          Log( LOG_DEBUG, "No handler for $cmd" );
+        }
+        @block    = ();
+        $function = undef;
         next;
-      } elsif ( defined $mapping{clients}{$1} ) {
-        Log( LOG_DEBUG, "Skipping window-add: One or more clients attached to $1" );
-        next;
-      } elsif ( $mapping{windows}{$1}{'blacklisted'} ) {
+      }
 
-        # When a window is added to a running session, we do not know the name of the window
-        # blacklisting only works when initially connecting to a session
-        Log( LOG_DEBUG, "Skipping window-add: $1 is blacklisted" );
+      # We messed up somewhere, reset the stack and carry on
+      if ( $line =~ m/^\%error/ ) {
+        Log( LOG_DEBUG, \@block );
+        $blockCapture = 0;
+        $function     = undef;
+        @block        = ();
+      }
+
+      # Push the line to the current block
+      if ($blockCapture) {
+        ( $function, $result ) = split( /:/, $line );
+        chomp($result);
+        push @block, $result;
         next;
-      } elsif ( $mapping{windows}{$1}{ignore} ) {
-        Log( LOG_DEBUG, "Skipping window-add: Ignore flag set for $1" );
-        next;
-      } else {
-        $mapping{windows}{$1}{'pending'} = 1;
+      }
+
+      # This event produces a TON of spam
+      # Linked sessions result in every session producing this, with out saying where it comes from
+      # Multiple conditions are used to keep from spawning an infinite sequence of windows
+      # %window-add @101
+      if ( $line =~ m/^\%window-add\s(\@\d+)/ ) {
+        if ( exists $mapping{windows}{$1}{'pending'} ) {
+
+          # This is removed only by spawnTerm
+          Log( LOG_DEBUG, "Skipping window-add: Session pending for $1" );
+          next;
+        } elsif ( defined $mapping{clients}{$1} ) {
+          Log( LOG_DEBUG, "Skipping window-add: One or more clients attached to $1" );
+          next;
+        } elsif ( $mapping{windows}{$1}{'blacklisted'} ) {
+
+          # When a window is added to a running session, we do not know the name of the window
+          # blacklisting only works when initially connecting to a session
+          Log( LOG_DEBUG, "Skipping window-add: $1 is blacklisted" );
+          next;
+        } elsif ( $mapping{windows}{$1}{ignore} ) {
+          Log( LOG_DEBUG, "Skipping window-add: Ignore flag set for $1" );
+          next;
+        } else {
+          $mapping{windows}{$1}{'pending'} = 1;
+          print $child_in $commandText{'ListWindows'};
+          Log( LOG_DEBUG, "window-add: Spawning a terminal for $1" );
+          spawnTerm( $host, $sess, $1, $child_in );
+          next;
+        }
+      }
+
+      # Update our internal knowledge of the window name
+      # %window-renamed @29 fish
+      if ( $line =~ m/^\%window-renamed\s(@\d+)\s(.*)/ ) {
+        Log( LOG_DEBUG, "Running $commandText{'ListWindows'}" );
         print $child_in $commandText{'ListWindows'};
-        Log( LOG_DEBUG, "window-add: Spawning a terminal for $1" );
-        spawnTerm( $host, $sess, $1, $child_in );
         next;
       }
-    }
 
-    # Update our internal knowledge of the window name
-    # %window-renamed @29 fish
-    if ( $line =~ m/^\%window-renamed\s(@\d+)\s(.*)/ ) {
-      Log( LOG_DEBUG, "Running $commandText{'ListWindows'}" );
-      print $child_in $commandText{'ListWindows'};
-      next;
-    }
-
-    # Update our client <> window map - two clients likely point to a single window
-    # %session-window-changed $92 @115
-    if ( $line =~ m/^\%session-window-changed\s(\$\d+)\s(\@\d+)/ ) {
-      Log( LOG_DEBUG, "Running $commandText{'ClientMap'}" );
-      print $child_in $commandText{'ClientMap'};
-      next;
-    }
-
-    # Produced when a client attaches to a session,
-    # %client-session-changed /dev/pts/10 $163 penthe-global-session-1545894242-319412-45
-    if ( $line =~ m/^\%client-session-changed\s(.*)\s(\$\d+)\s([\w-]+)/ ) {
-      Log( LOG_DEBUG, "Running $commandText{'ClientMap'}" );
-      print $child_in $commandText{'ClientMap'};
-      next;
-    }
-
-    # Produced when a client attaches or detaches (xterm is killed)
-    # %sessions-changed
-    if ( $line =~ m/^\%sessions-changed/ ) {
-      Log( LOG_DEBUG, "Running $commandText{'ClientMap'}" );
-      print $child_in $commandText{'ClientMap'};
-      next;
-    }
-
-    # This event is fired once for each window in a session when a terminal (xterm, etc) is killed
-    # Since it doesn't contain any other actionable values, it's unusable
-    # %window-close @101
-    if ( $line =~ m/^\%window-close\s(@\d+)/ ) {
-      next;
-    }
-
-    # Produced when the process in a tmux window ends
-    # Kill all attached sessions viewing that window
-    # %unlinked-window-close @95
-    if ( $line =~ m/^\%unlinked-window-close\s(@\d+)/ ) {
-
-      # skip this if it doesn't exist in our mapping
-      # it came from another session group
-      next unless exists $mapping{clients}{$1};
-      while ( @{ $mapping{clients}{$1} } ) {
-        my $client = pop @{ $mapping{clients}{$1} };
-        Log( LOG_DEBUG, "Killing session $client, window $1 closed" );
-        print $child_in $commandText{'KillClient'} . "$client\n";
+      # Update our client <> window map - two clients likely point to a single window
+      # %session-window-changed $92 @115
+      if ( $line =~ m/^\%session-window-changed\s(\$\d+)\s(\@\d+)/ ) {
+        Log( LOG_DEBUG, "Running $commandText{'ClientMap'}" );
+        print $child_in $commandText{'ClientMap'};
+        next;
       }
-      delete $mapping{clients}{$1};
-      delete $mapping{windows}{$1};
-      print $child_in $commandText{'ListWindows'};
-      print $child_in $commandText{'ClientMap'};
 
+      # Produced when a client attaches to a session,
+      # %client-session-changed /dev/pts/10 $163 penthe-global-session-1545894242-319412-45
+      if ( $line =~ m/^\%client-session-changed\s(.*)\s(\$\d+)\s([\w-]+)/ ) {
+        Log( LOG_DEBUG, "Running $commandText{'ClientMap'}" );
+        print $child_in $commandText{'ClientMap'};
+        next;
+      }
+
+      # Produced when a client attaches or detaches (xterm is killed)
+      # %sessions-changed
+      if ( $line =~ m/^\%sessions-changed/ ) {
+        Log( LOG_DEBUG, "Running $commandText{'ClientMap'}" );
+        print $child_in $commandText{'ClientMap'};
+        next;
+      }
+
+      # This event is fired once for each window in a session when a terminal (xterm, etc) is killed
+      # Since it doesn't contain any other actionable values, it's unusable
+      # %window-close @101
+      if ( $line =~ m/^\%window-close\s(@\d+)/ ) {
+        next;
+      }
+
+      # Produced when the process in a tmux window ends
+      # Kill all attached sessions viewing that window
+      # %unlinked-window-close @95
+      if ( $line =~ m/^\%unlinked-window-close\s(@\d+)/ ) {
+
+        # skip this if it doesn't exist in our mapping
+        # it came from another session group
+        next unless exists $mapping{clients}{$1};
+        while ( @{ $mapping{clients}{$1} } ) {
+          my $client = pop @{ $mapping{clients}{$1} };
+          Log( LOG_DEBUG, "Killing session $client, window $1 closed" );
+          print $child_in $commandText{'KillClient'} . "$client\n";
+        }
+        delete $mapping{clients}{$1};
+        delete $mapping{windows}{$1};
+        print $child_in $commandText{'ListWindows'};
+        print $child_in $commandText{'ClientMap'};
+
+      }
     }
   }
+
 MAINEND:
   $passcount = 1;
   exit unless ( ( $config->{reconnect} ) or not( $config->{exitlast} ) );
@@ -546,6 +555,8 @@ sub LoadConfig {
     "temp"           => join( '/', ( $ENV{'HOME'}, qw(.tmuxc) ) ),
     "skipnw"         => 0,
     "prettyps"       => 1,
+    "swm"            => 0,
+    "on_connect"     => [qw()],
   );
 
   # Read in the config file
@@ -627,7 +638,11 @@ sub LoadConfig {
   ( $config->{hostname}, undef ) = split( /\./, hostname, 2 );
 
   # Define our control session
-  $config->{control} = join( '/', ( qw(tmuxc), $config->{session}, qw(control) ) );
+  if ( $config->{swm} ) {
+    $config->{control} = join( '/', ( qw(tmuxc), $config->{hostname}, $config->{session} ) );
+  } else {
+    $config->{control} = join( '/', ( qw(tmuxc), $config->{session}, qw(control) ) );
+  }
 
   # Define our command fifo
   $config->{command} =
@@ -1089,18 +1104,59 @@ sub buildCommand {
   return @cmd;
 }
 
+sub spawnSingleTerm {
+  my ( $host, $session, $child_in ) = @_;
+
+  if ( length $config->{on_connect} ) {
+    for my $option ( @{ $config->{on_connect} } ) {
+      print Log( LOG_DEBUG, $option );
+      print $child_in $option . "\n";
+    }
+  }
+
+  my @cmd            = buildCommand( $host, [ $config->{tmux_bin}, qw(attach -t), $session, ] );
+  my $attach_command = join( ' ', @cmd );
+
+  $session =~ s/\//-/g;
+  my $script       = join( '', ( $config->{temp}, $session ) );
+  my $start_script = qq|#!/bin/sh
+test -f $script && rm $script
+exec $attach_command
+|;
+
+  open SCRIPT, '>', $script;
+  print SCRIPT $start_script;
+  close SCRIPT;
+  chmod 0700, $script;
+
+  my @exec = @{ $config->{terminal} };
+  push @exec, $script;
+  Log( LOG_DEBUG, "Terminal spawn command" );
+  Log( LOG_DEBUG, \@exec );
+  my $fpid = fork;
+  if ( $fpid == 0 ) {
+    exit 255 unless open STDIN,  '/dev/null';
+    exit 255 unless open STDOUT, '>/dev/null';
+    exit 255 unless open STDERR, '>/dev/null';
+    exec @exec;
+  }
+  waitpid( $fpid, 0 );
+  return;
+}
+
 # Write out a custom shell script and launch it with our terminal
 sub spawnTerm {
   my ( $host, $session, $window, $child_in ) = @_;
-  my ( undef, $id )   = split( '@', $window );
+  my ( undef, $id ) = split( '@', $window );
 
   my $clone_session = join( '/', ( qw(tmuxc), $config->{hostname}, $session, $id ) );
 
-  my $clone_command = join( ' ', ( qw(new-session -d -t), $session, qw(-s), $clone_session, qw(; select-window -t), $window, "\n" ) );
-  print Log( LOG_DEBUG, $clone_command);
+  my $clone_command =
+    join( ' ', ( qw(new-session -d -t), $session, qw(-s), $clone_session, qw(; select-window -t), $window, "\n" ) );
+  print Log( LOG_DEBUG, $clone_command );
   print $child_in $clone_command;
 
-  my @cmd = buildCommand( $host, [ $config->{tmux_bin}, qw(attach -t), $clone_session, ] );
+  my @cmd            = buildCommand( $host, [ $config->{tmux_bin}, qw(attach -t), $clone_session, ] );
   my $attach_command = join( ' ', @cmd );
 
   $clone_session =~ s/\//-/g;
