@@ -337,7 +337,7 @@ fi
         } elsif ( exists( $publicCommands{$1} ) ) {
 
           # Execute a command directly with no required input
-          $publicCommands{$1}->();
+          $publicCommands{$1}->($child_in);
         } else {
           Log( LOG_INFO, "FIFO Handler: Unknown command $1" );
         }
@@ -1396,9 +1396,11 @@ sub ClientMap {
 
 sub PauseSelf {
   $pause ^= 1;
+  Log( LOG_DEBUG, "Pause is now $pause" );
 }
 
 sub KillSelf {
+  Log( LOG_DEBUG, "Received KillSelf command, exiting ..." );
   exit;
 }
 
@@ -1491,6 +1493,10 @@ Open up a menu listing control options. If one instance is running, the command 
 =item B<--singlemenu|M>
 
 Open up a menu listing control options. The options take the form of session@host % <action>, and are shown as a single-depth menu. Smart pagers (rofi, bemenu, etc) allow you to type partial words in any order to narrow down the option to execute.
+
+=item B<--swm|w>
+
+Enable single-window-mode. This opens up a single terminal for an entire tmux session, consistent with typical tmux usage.
 
 =item B<--known|k> | B<--known|k=,>
 
