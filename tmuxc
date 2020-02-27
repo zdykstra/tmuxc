@@ -3,7 +3,7 @@
 use strict;
 use warnings;
 
-our $VERSION = '1.3.5';
+our $VERSION = '1.5';
 
 use Getopt::Long qw(:config no_ignore_case auto_version);
 use Time::HiRes qw( sleep gettimeofday );
@@ -36,7 +36,7 @@ BEGIN {
 my (
   $config,       $configfile,  $pause,          $v,              $noclean, $host,
   $help,         $passcount,   %publicCommands, %defaultOptions, %cli,     %mapping,
-  %commandParse, %commandText, %menu,           $cliAction,
+  %commandParse, %commandText, %menu,           $cliAction,      @children,
 );
 
 # Looking for configs in all the right places
@@ -61,9 +61,19 @@ $v         = LOG_NOTICE;
 $pause     = 0;
 $passcount = 0;
 
+# Manipulate ARGV before we got to our options parser
+if ( ( scalar(@ARGV) == 1 ) and ( $ARGV[0] =~ m/@/ ) ) {
+
+  # If we have a single argument, try to parse it as a session@host
+  unshift( @ARGV, qw(-s) );
+} elsif ( scalar(@ARGV) == 0 ) {
+
+  # No arguments, show the help output
+  unshift( @ARGV, qw(--help) );
+}
+
 GetOptions(
   "host|h=s"     => \$cli{host},
-  "session|s=s"  => \$cli{session},
   "background|b" => \$cli{background},
   "config|c=s"   => \$configfile,
   "detach|d"     => \$cli{detach},
@@ -75,6 +85,14 @@ GetOptions(
   "swm|w"        => \$cli{swm},
   "ephemeral|S"  => sub {
     $cliAction = \&EphemeralSession;
+  },
+  "session|s=s" => sub {
+    ( undef, my $session ) = @_;
+    if ( $session =~ m/@/ ) {
+      ( $cli{session}, $cli{host} ) = split( /@/, $session );
+    } else {
+      $cli{session} = $session;
+    }
   },
   "new|n" => sub {
     $cliAction = sub {
@@ -523,6 +541,8 @@ END {
 
 sub CleanExit {
   exit if $noclean;
+
+  kill 'INT', @children if length scalar(@children);
 
   unlink $config->{command};
   unlink $config->{pidfile};
@@ -1140,7 +1160,9 @@ exec $attach_command
     exit 255 unless open STDERR, '>/dev/null';
     exec @exec;
   }
+  push( @children, $fpid );
   waitpid( $fpid, 0 );
+  pop(@children);
   return;
 }
 
@@ -1400,8 +1422,8 @@ sub PauseSelf {
 }
 
 sub KillSelf {
-  Log( LOG_DEBUG, "Received KillSelf command, exiting ..." );
-  exit;
+  Log( LOG_DEBUG, "Received KillSelf command, killing $$" );
+  kill 'INT', $$;
 }
 
 sub Log {
@@ -1448,7 +1470,7 @@ Connect to a tmux instance on the listed host.
 
 =item B<--session|s>
 
-Attach to the listed tmux session.
+Attach to the listed tmux session, or attach to the session@hostname.
 
 =item B<--background|b>
 
@@ -1506,7 +1528,7 @@ List active and inactive sessions. Takes an optional character argument to enabl
 
 Print configuration options for the host and session selected from command line arguments.
 
-=item B<--oneoff|S>
+=item B<--ephemeral|S>
 
 Prompt for a new session. The session can take the form of B<session> or B<session@hostname>
 
