@@ -326,6 +326,7 @@ fi
   my ( @block, $function, $result );
 
   $pid = open2( $child_out, $child_in, @cmd );
+  push( @children, $pid );
 
   # Create our command channel
   unless ( -p $config->{command} ) {
@@ -536,13 +537,12 @@ MAINEND:
 
 END {
   exit if $noclean;
+  kill 'INT', @children if scalar(@children);
   CleanExit;
 }
 
 sub CleanExit {
   exit if $noclean;
-
-  kill 'INT', @children if length scalar(@children);
 
   unlink $config->{command};
   unlink $config->{pidfile};
