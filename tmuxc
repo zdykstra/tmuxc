@@ -83,7 +83,16 @@ GetOptions(
   "exitlast|E"   => \$cli{exitlast},
   "print|o"      => \$cli{printOptions},
   "swm|w"        => \$cli{swm},
-  "ephemeral|S"  => sub {
+  "poe|P=s"      => sub {
+    ( undef, my $scope ) = @_;
+    unless ( $scope =~ m/(none|ephemeral|any)/ ) {
+      print "Invalid purge on exit scope: $scope\n";
+      exit;
+    } else {
+      $cli{poe} = $scope;
+    }
+  },
+  "ephemeral|S" => sub {
     $cliAction = \&EphemeralSession;
   },
   "session|s=s" => sub {
@@ -537,6 +546,17 @@ MAINEND:
 
 END {
   exit if $noclean;
+
+  if ( ( $config->{poe} eq "any" )
+    or ( $config->{ephemeral} and $config->{poe} eq "ephemeral" ) )
+  {
+    my @cmd = buildCommand( $host, [ $config->{tmux_bin}, qw(kill-session -t), $config->{control}, ] );
+    Log( LOG_DEBUG, \@cmd );
+
+    @cmd = buildCommand( $host, [ $config->{tmux_bin}, qw(kill-session -t), $config->{session}, ] );
+    Log( LOG_DEBUG, \@cmd );
+  }
+
   kill 'INT', @children if scalar(@children);
   CleanExit;
 }
@@ -577,6 +597,7 @@ sub LoadConfig {
     "prettyps"       => 1,
     "swm"            => 0,
     "on_connect"     => [qw()],
+    "poe"            => "none",
   );
 
   # Read in the config file
@@ -619,6 +640,9 @@ sub LoadConfig {
   }
 
   my $sess = $config->{session};
+
+  # Record if this is an ephemeral session
+  $config->{ephemeral} = ( defined( $config->{hosts}{$chost}{$sess} ) ) ? 0 : 1;
 
   # Look up a number of keys that can be set at different levels
   # If no value can be found, use a sane default
