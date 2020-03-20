@@ -550,11 +550,13 @@ END {
   if ( ( $config->{poe} eq "any" )
     or ( $config->{ephemeral} and $config->{poe} eq "ephemeral" ) )
   {
-    my @cmd = buildCommand( $host, [ $config->{tmux_bin}, qw(kill-session -t), $config->{control}, ] );
+    my @cmd = buildCommand( $host, [ $config->{tmux_bin}, qw(kill-session -t), $config->{session}, ] );
     Log( LOG_DEBUG, \@cmd );
+    qx(@cmd);
 
-    @cmd = buildCommand( $host, [ $config->{tmux_bin}, qw(kill-session -t), $config->{session}, ] );
+    @cmd = buildCommand( $host, [ $config->{tmux_bin}, qw(kill-session -t), $config->{control}, ] );
     Log( LOG_DEBUG, \@cmd );
+    qx(@cmd);
   }
 
   kill 'INT', @children if scalar(@children);
