@@ -167,6 +167,7 @@ If the default option is acceptable, you do not need to define it again in a con
 * `on_connect (default[])`: When operating in single-window-mode, define an array of tmux commands to be sent to the cloned session to which you are attached. This option is only executed when `swm` is true.
 * `persist (default 10s)`: Set the SSH `ControlPersist` option for control master connections.
 * `prettyps (default 1)`: Control the process name on the command line, reducing it to `binaryname session@host`.
+* `poe (default none)`: Enable purge-on-exit for `ephemeral` or `all` sessions. This will execute a `kill-session` against the session on exit.
 * `reconnect (default 1)`: Attempt to reconnect to the remote host and re-open windows if SSH drops. This is useful for laptops that are suspended frequently.
 * `selector (default: rofi -dmenu -i)`: Define the menu command, used for picking a session / session action.
 * `skipnw (default 0)`: Do not launch a new terminal when a new window is created in tmux. 

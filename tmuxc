@@ -551,11 +551,11 @@ END {
     or ( $config->{ephemeral} and $config->{poe} eq "ephemeral" ) )
   {
     my @cmd = buildCommand( $host, [ $config->{tmux_bin}, qw(kill-session -t), $config->{session}, ] );
-    Log( LOG_DEBUG, \@cmd );
+    Log( LOG_DEBUG, "Killing session $config->{session}" );
     qx(@cmd);
 
     @cmd = buildCommand( $host, [ $config->{tmux_bin}, qw(kill-session -t), $config->{control}, ] );
-    Log( LOG_DEBUG, \@cmd );
+    Log( LOG_DEBUG, "Killing control session $config->{control}" );
     qx(@cmd);
   }
 
@@ -1537,6 +1537,10 @@ Open up a menu listing sessions from the .tmuxc.conf file that aren't running.
 =item B<--menu|m>
 
 Open up a menu listing control options. If one instance is running, the command is executed on that instance. If multiple are running, prompt the running sessions.
+
+=item B<--poe|P>
+
+Enable purge-on-exit for sessions of type 'none', 'ephemeral' or 'all'. This executes a I<kill-session> against the session on tmuxc exit.
 
 =item B<--singlemenu|M>
 
