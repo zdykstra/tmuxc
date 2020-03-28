@@ -83,7 +83,16 @@ GetOptions(
   "exitlast|E"   => \$cli{exitlast},
   "print|o"      => \$cli{printOptions},
   "swm|w"        => \$cli{swm},
-  "ephemeral|S"  => sub {
+  "poe|P=s"      => sub {
+    ( undef, my $scope ) = @_;
+    unless ( $scope =~ m/(none|ephemeral|any)/ ) {
+      print "Invalid purge on exit scope: $scope\n";
+      exit;
+    } else {
+      $cli{poe} = $scope;
+    }
+  },
+  "ephemeral|S" => sub {
     $cliAction = \&EphemeralSession;
   },
   "session|s=s" => sub {
@@ -537,6 +546,19 @@ MAINEND:
 
 END {
   exit if $noclean;
+
+  if ( ( $config->{poe} eq "any" )
+    or ( $config->{ephemeral} and $config->{poe} eq "ephemeral" ) )
+  {
+    my @cmd = buildCommand( $host, [ $config->{tmux_bin}, qw(kill-session -t), $config->{session}, ] );
+    Log( LOG_DEBUG, "Killing session $config->{session}" );
+    qx(@cmd);
+
+    @cmd = buildCommand( $host, [ $config->{tmux_bin}, qw(kill-session -t), $config->{control}, ] );
+    Log( LOG_DEBUG, "Killing control session $config->{control}" );
+    qx(@cmd);
+  }
+
   kill 'INT', @children if scalar(@children);
   CleanExit;
 }
@@ -577,6 +599,7 @@ sub LoadConfig {
     "prettyps"       => 1,
     "swm"            => 0,
     "on_connect"     => [qw()],
+    "poe"            => "none",
   );
 
   # Read in the config file
@@ -619,6 +642,9 @@ sub LoadConfig {
   }
 
   my $sess = $config->{session};
+
+  # Record if this is an ephemeral session
+  $config->{ephemeral} = ( defined( $config->{hosts}{$chost}{$sess} ) ) ? 0 : 1;
 
   # Look up a number of keys that can be set at different levels
   # If no value can be found, use a sane default
@@ -1511,6 +1537,10 @@ Open up a menu listing sessions from the .tmuxc.conf file that aren't running.
 =item B<--menu|m>
 
 Open up a menu listing control options. If one instance is running, the command is executed on that instance. If multiple are running, prompt the running sessions.
+
+=item B<--poe|P>
+
+Enable purge-on-exit for sessions of type 'none', 'ephemeral' or 'all'. This executes a I<kill-session> against the session on tmuxc exit.
 
 =item B<--singlemenu|M>
 
