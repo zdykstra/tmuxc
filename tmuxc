@@ -327,6 +327,13 @@ fi
   ( undef, $config->{version} ) = split( ' ', $setup_response );
   Log( LOG_DEBUG, "tmux version $config->{version} detected" );
 
+  # We've possibly fallen through the loop, so clean up any lingering child processes
+  while (@children) {
+    my $child = pop @children;
+    Log( LOG_DEBUG, "Killing child process $child" );
+    kill 'INT', $child;
+  }
+
   # Attach to control session in control mode
   @cmd = buildCommand( $host, [ $config->{tmux_bin}, qw(-C attach -t), $config->{control}, ] );
 
