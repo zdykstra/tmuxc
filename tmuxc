@@ -336,6 +336,7 @@ fi
 
   # Attach to control session in control mode
   @cmd = buildCommand( $host, [ $config->{tmux_bin}, qw(-C attach -t), $config->{control}, ] );
+  Log( LOG_DEBUG, join( ' ', @cmd ) );
 
   my ( $pid, $child_out, $child_in );
   my $blockCapture = 0;
