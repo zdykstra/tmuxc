@@ -34,9 +34,9 @@ BEGIN {
 }
 
 my (
-  $config,       $configfile,  $pause,          $v,              $noclean, $host,
-  $help,         $passcount,   %publicCommands, %defaultOptions, %cli,     %mapping,
-  %commandParse, %commandText, %menu,           $cliAction,      @children,
+  $config,      $configfile,     $pause,          $v,   $noclean, $host,
+  $help,        %publicCommands, %defaultOptions, %cli, %mapping, %commandParse,
+  %commandText, %menu,           $cliAction,      @children,
 );
 
 # Looking for configs in all the right places
@@ -56,10 +56,9 @@ unless ( length $configfile ) {
   $configfile = $configtests[0];
 }
 
-$noclean   = 1;
-$v         = LOG_NOTICE;
-$pause     = 0;
-$passcount = 0;
+$noclean = 1;
+$v       = LOG_NOTICE;
+$pause   = 0;
 
 # Manipulate ARGV before we got to our options parser
 if ( ( scalar(@ARGV) == 1 ) and ( $ARGV[0] =~ m/@/ ) ) {
@@ -232,46 +231,46 @@ while (1) {
   # Remote host mode!
   # Check if we have a ControlMaster session, create it if not
   if ( defined($host) ) {
-    @cmd = buildCommand(
-      undef,
-      [
-        qq(ssh -q -O check),
-        qq(-o ConnectTimeout=$config->{conn_timeout}),
-        qq(-o ControlPath=$config->{temp}ssh/%C 2>/dev/null),
-        $host
-      ]
-    );
-    Log( LOG_DEBUG, "Checking if ControlMaster for $host exists" );
-    Log( LOG_DEBUG, join( ' ', @cmd ) );
-    qx(@cmd);
+    while (1) {
 
-    # Master isn't running, start up a new ControlMaster
-    if ( ( $? >> 8 ) != 0 ) {
-      @cmd = buildCommand(
-        undef,
-        [
-          qq(ssh),
-          qq(-o ConnectTimeout=$config->{conn_timeout}),
-          qq(-o ServerAliveInterval=$config->{alive_interval}),
-          qq(-o ServerAliveCountMax=$config->{alive_count}),
-          qq(-o ControlPersist=$config->{persist}),
-          qq(-o ControlPath=$config->{temp}ssh/%C),
-          qq(-o ControlMaster=yes),
-          qq(@{ $config->{ssh_args} }),
-          qq(-f -N),
-          $host
-        ]
-      );
-      Log( LOG_DEBUG, "ControlMaster for $host not running, creating one" );
-      Log( LOG_DEBUG, join( ' ', @cmd ) );
-      qx(@cmd);
+      # Master isn't running, start up a new ControlMaster
+      unless ( CheckControlMaster($host) ) {
+        @cmd = buildCommand(
+          undef,
+          [
+            qq(ssh),
+            qq(-o ConnectTimeout=$config->{conn_timeout}),
+            qq(-o ServerAliveInterval=$config->{alive_interval}),
+            qq(-o ServerAliveCountMax=$config->{alive_count}),
+            qq(-o ControlPersist=$config->{persist}),
+            qq(-o ControlPath=$config->{temp}ssh/%C),
+            qq(-o ControlMaster=yes),
+            qq(@{ $config->{ssh_args} }),
+            qq(-f -N),
+            $host
+          ]
+        );
+        Log( LOG_DEBUG, "ControlMaster for $host not running, creating one" );
+        Log( LOG_DEBUG, join( ' ', @cmd ) );
+        qx(@cmd);
 
-      if ( ( $? >> 8 ) != 0 ) {
-        Log( LOG_INFO, "Retrying connection to $host in 5 seconds" );
-        sleep 5;
-        if ( $config->{reconnect} ) {
-          goto MAINEND;
+        if ( ( $? >> 8 ) != 0 ) {
+          Log( LOG_INFO, "Retrying connection to $host in 5 seconds" );
+          sleep 5;
+          unless ( $config->{reconnect} ) {
+            exit;
+          }
+        } else {
+
+          # ControlMaster was successfully established
+          Log( LOG_DEBUG, "ControlMaster session to $host established" );
+          last;
         }
+      } else {
+
+        # ControlMaster is already established
+        Log( LOG_DEBUG, "Reusing ControlMaster session to $host" );
+        last;
       }
     }
   }
@@ -547,9 +546,18 @@ fi
     }
   }
 
-MAINEND:
-  $passcount = 1;
-  exit unless ( ( $config->{reconnect} ) or not( $config->{exitlast} ) );
+  if ( $config->{exitlast} ) {
+    Log( LOG_DEBUG, "Control FIFO closed, checking if ControlMaster is still open" );
+    if ( CheckControlMaster($host) ) {
+
+      # If the ControlMaster session is still open, the tmux session has been closed - exit
+      Log( LOG_DEBUG, "Exiting after last window in tmux session closed" );
+      exit;
+    }
+  } else {
+    exit unless ( $config->{reconnect} );
+    Log( LOG_DEBUG, "ControlMaster is closed, attempting to reconnect" );
+  }
 }
 
 END {
@@ -577,6 +585,25 @@ sub CleanExit {
   unlink $config->{command};
   unlink $config->{pidfile};
   exit;
+}
+
+sub CheckControlMaster {
+  my $host = shift;
+
+  my @cmd = buildCommand(
+    undef,
+    [
+      qq(ssh -q -O check),
+      qq(-o ConnectTimeout=$config->{conn_timeout}),
+      qq(-o ControlPath=$config->{temp}ssh/%C 2>/dev/null),
+      $host
+    ]
+  );
+  Log( LOG_DEBUG, "Checking ControlMaster for $host" );
+  Log( LOG_DEBUG, join( ' ', @cmd ) );
+  qx(@cmd);
+
+  return ( $? >> 8 );
 }
 
 # Load our default config file / user defined
