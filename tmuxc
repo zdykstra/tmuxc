@@ -733,8 +733,9 @@ sub LoadConfig {
   $config->{pidfile} = join( '', ( $config->{temp}, qw(pid/), $config->{session}, qw(@), $config->{chost}, qw(.pid) ) );
 
   %publicCommands = (
-    'KillSelf'  => \&KillSelf,
-    'PauseSelf' => \&PauseSelf,
+    'KillSelf'   => \&KillSelf,
+    'PauseSelf'  => \&PauseSelf,
+    'LoadConfig' => \&LoadConfig,
   );
 
   # The first field in the format string indicates the lookup key for %commandParse
@@ -763,6 +764,7 @@ sub LoadConfig {
     'Kill Control Daemon'      => 'tmuxc KillSelf',
     'Open All Windows'         => 'tmuxc BulkSpawn',
     'Pause Session'            => 'tmuxc PauseSelf',
+    'Reload Configuration'     => 'tmuxc LoadConfig',
   );
 
   if ( defined( $cli{printOptions} ) ) {
