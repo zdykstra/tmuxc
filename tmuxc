@@ -813,7 +813,7 @@ sub Menu {
 
         # Add everything but Create Ephemeral Session
         next if $key =~ m/Ephemeral/;
-        print $child_in "$hostsession \% $key\n";
+        print $child_in "$hostsession ~ $key\n";
       }
     }
   }
@@ -826,8 +826,8 @@ sub Menu {
   my ( $hostsession, $action );
 
   # Single page action menu
-  if ( $selection =~ m/\%/ ) {
-    ( $hostsession, $action ) = split( /\ \%\ /, $selection );
+  if ( $selection =~ m/\~/ ) {
+    ( $hostsession, $action ) = split( /\ ~\ /, $selection );
     InjectCommand( $menu{$action}, $hostsession );
   } elsif ( ref $menu{$selection} eq REFSUB ) {
 
