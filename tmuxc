@@ -1665,6 +1665,10 @@ Instruct tmuxc to cleanly exit.
 Instruct tmuxc to ignore all input from the command line and from tmux, until this 
 option is toggled again.
 
+=item B<LoadConfig>
+
+Instruct tmuxc to reload the configuration file from disk. The configuration file path discovered at the initial start of tmuxc is re-used.
+
 =back
 
 =head1 AUTHOR
