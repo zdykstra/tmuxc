@@ -118,6 +118,12 @@ GetOptions(
       KnownSessions( $cli{csv} );
     };
   },
+  "remote|K:s" => sub {
+    ( undef, my $rhost ) = @_;
+    $cliAction = sub {
+      RemoteSessions($rhost);
+    }
+  },
   "menu|m" => sub {
     $cliAction = sub {
       Menu("paged");
@@ -859,6 +865,47 @@ sub EphemeralSession {
   }
 
   LaunchNewInstance( join( '@', $session, $host ), "-E" );
+  exit;
+}
+
+sub RemoteSessions {
+  my $host = shift;
+
+  my ( $child_out, $child_in, @prompt );
+
+  # Prompt for a host if none were provided
+  unless ( length($host) ) {
+    @prompt = @{ $config->{input_prompt} };
+    push( @prompt, "Host" );
+    my $pid = open2( $child_out, $child_in, @prompt );
+
+    print $child_in "";
+    close($child_in);
+    $host = <$child_out>;
+    exit unless defined($host);
+    chomp($host);
+  }
+
+  my @cmd       = buildCommand( $host, [ $config->{tmux_bin}, qw(list-sessions) ] );
+  my @rsessions = qx(@cmd);
+  Log( LOG_DEBUG, \@rsessions );
+
+  my $pid = open2( $child_out, $child_in, @{ $config->{selector} } );
+
+  for my $hostsession ( sort @rsessions ) {
+    chomp($hostsession);
+    my ( $rsession, undef ) = split( /:/, $hostsession );
+    next if ( $rsession =~ m/^tmuxc\// );
+    Log( LOG_DEBUG, "Prompting for $rsession" );
+    print $child_in "$rsession\@$host\n";
+  }
+
+  close($child_in);
+  my $response = <$child_out>;
+  exit unless defined($response);
+  chomp($response);
+
+  LaunchNewInstance( $response, "--poe none" );
   exit;
 }
 
