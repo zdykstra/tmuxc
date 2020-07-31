@@ -890,14 +890,24 @@ sub RemoteSessions {
   my @rsessions = qx(@cmd);
   Log( LOG_DEBUG, \@rsessions );
 
+  my $instances = InstanceCheck();
+
+  my @ksessions;
+  if ( defined( $instances->{running} ) ) {
+    @ksessions = @{ $instances->{running} };
+    Log( LOG_DEBUG, \@ksessions );
+  }
+
   my $pid = open2( $child_out, $child_in, @{ $config->{selector} } );
 
   for my $hostsession ( sort @rsessions ) {
     chomp($hostsession);
     my ( $rsession, undef ) = split( /:/, $hostsession );
     next if ( $rsession =~ m/^tmuxc\// );
+    $rsession = "$rsession\@$host";
+    next if ( grep { $_ eq $rsession } @ksessions );
     Log( LOG_DEBUG, "Prompting for $rsession" );
-    print $child_in "$rsession\@$host\n";
+    print $child_in "$rsession\n";
   }
 
   close($child_in);
