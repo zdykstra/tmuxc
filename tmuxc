@@ -1648,6 +1648,10 @@ Enable single-window-mode. This opens up a single terminal for an entire tmux se
 
 List active and inactive sessions. Takes an optional character argument to enable CSV output for machine parsing.
 
+=item B<remote|K> | B<remote|K host>
+
+List tmux sessions on a remote host that do not have a local instance of tmuxc attached to them, then connect to the session.
+
 =item B<--print|o>
 
 Print configuration options for the host and session selected from command line arguments.
@@ -1686,9 +1690,9 @@ Issue the raw tmux command I<new-window -d> to the default session on localhost.
 
 =head1 SCRIPTING
 
-Each running instance of tmuxc creates a command FIFO that can be used to control tmux and tmuxc. The FIFO takes the form of F<hostname-session.control>, and by default is available in F<~/.tmuxc/control/>. Once you've written a command to the FIFO, send the B<USR1> signal to tmuxc. The PID is available in F<~/.tmuxc/pid/hostname-session.pid>. 
+Each running instance of tmuxc creates a command FIFO that can be used to control tmux and tmuxc. The FIFO takes the form of F<hostname-session.control>, and by default is available in F<~/.tmuxc/control/>. Once you've written a command to the FIFO, send the B<USR1> signal to tmuxc. The PID is available in F<~/.tmuxc/pid/hostname-session.pid>.
 
-See B<RAW COMMANDS> for examples. 
+See B<RAW COMMANDS> for examples.
 
 =head1 RAW COMMANDS
 
@@ -1719,8 +1723,7 @@ Instruct tmuxc to cleanly exit.
 
 =item B<PauseSelf>
 
-Instruct tmuxc to ignore all input from the command line and from tmux, until this 
-option is toggled again.
+Instruct tmuxc to ignore all input from the command line and from tmux, until this option is toggled again.
 
 =item B<LoadConfig>
 
