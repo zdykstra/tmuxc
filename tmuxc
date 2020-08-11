@@ -1638,7 +1638,7 @@ Enable purge-on-exit for sessions of type 'none', 'ephemeral' or 'all'. This exe
 
 =item B<--singlemenu|M>
 
-Open up a menu listing control options. The options take the form of session@host % <action>, and are shown as a single-depth menu. Smart pagers (rofi, bemenu, etc) allow you to type partial words in any order to narrow down the option to execute.
+Open up a menu listing control options. The options take the form of session@host ~ <action>, and are shown as a single-depth menu. Smart pagers (rofi, bemenu, etc) allow you to type partial words in any order to narrow down the option to execute.
 
 =item B<--swm|w>
 
