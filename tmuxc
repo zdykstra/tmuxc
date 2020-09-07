@@ -244,10 +244,10 @@ while (1) {
   if ( defined($host) ) {
 
     # Check if we have a ControlMaster session, create it if not
-    while (1) {
+    unless ( CheckControlMaster($host) ) {
 
       # Master isn't running, start up a new ControlMaster
-      unless ( CheckControlMaster($host) ) {
+      while (1) {
         @cmd = buildCommand(
           undef,
           [
@@ -279,12 +279,11 @@ while (1) {
           Log( LOG_DEBUG, "ControlMaster session to $host established" );
           last;
         }
-      } else {
-
-        # ControlMaster is already established
-        Log( LOG_DEBUG, "Reusing ControlMaster session to $host" );
-        last;
       }
+    } else {
+
+      # ControlMaster is already established
+      Log( LOG_DEBUG, "Reusing ControlMaster session to $host" );
     }
   }
 
@@ -324,7 +323,7 @@ fi
 
   chmod 0700, $script;
 
-  Log( LOG_DEBUG, "Created setup script $script" );
+  Log( LOG_DEBUG, "Created setup script: $script" );
 
   if ($host) {
     @cmd = buildCommand( $host, [qw(sh)] );
@@ -363,7 +362,7 @@ fi
   # Install our USR1 handler to process anything in the FIFO
   $SIG{USR1} = sub {
     my @commands = <CONTROL_FIFO>;
-    Log( LOG_DEBUG, "Processing commands in FIFO handler:" );
+    Log( LOG_DEBUG, "Processing commands in FIFO handler" );
     Log( LOG_DEBUG, \@commands );
     foreach my $line (@commands) {
       if ($pause) {
@@ -688,7 +687,7 @@ sub LoadConfig {
   # Record if this is an ephemeral session
   $config->{ephemeral} = ( defined( $config->{hosts}{$chost}{$sess} ) ) ? 0 : 1;
 
-  # log level is little tricky
+  # log level is a little tricky
   if ( defined( $cli{verbosity} ) ) {
 
     # I've got two -v's and a log debug
