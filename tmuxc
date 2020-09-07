@@ -34,9 +34,9 @@ BEGIN {
 }
 
 my (
-  $config,      $configfile,     $pause,          $v,   $noclean, $host,
-  $help,        %publicCommands, %defaultOptions, %cli, %mapping, %commandParse,
-  %commandText, %menu,           $cliAction,      @children,
+  $config,       $configfile,     $pause,          $noclean,   $host,
+  $help,         %publicCommands, %defaultOptions, %cli,       %mapping,
+  %commandParse, %commandText,    %menu,           $cliAction, @children,
 );
 
 # Looking for configs in all the right places
@@ -57,7 +57,6 @@ unless ( length $configfile ) {
 }
 
 $noclean = 1;
-$v       = LOG_NOTICE;
 $pause   = 0;
 
 # Manipulate ARGV before we got to our options parser
@@ -76,13 +75,15 @@ GetOptions(
   "background|b" => \$cli{background},
   "config|c=s"   => \$configfile,
   "detach|d"     => \$cli{detach},
-  "verbose|v+"   => \$v,
   "reconnect|R"  => \$cli{reconnect},
   "closeas|C"    => \$cli{closeas},
   "exitlast|E"   => \$cli{exitlast},
   "print|o"      => \$cli{printOptions},
   "swm|w"        => \$cli{swm},
-  "poe|P=s"      => sub {
+  "verbose|v+"   => sub {
+    $cli{verbosity} += 1;
+  },
+  "poe|P=s" => sub {
     ( undef, my $scope ) = @_;
     unless ( $scope =~ m/(none|ephemeral|any)/ ) {
       print "Invalid purge on exit scope: $scope\n";
@@ -161,9 +162,6 @@ GetOptions(
   },
 );
 
-# Adjust our log level based on one or more -v's
-$cli{log_level} = $v;
-
 # Load our configuration file
 LoadConfig;
 
@@ -234,9 +232,18 @@ while (1) {
   %mapping = ();
   my @cmd;
 
+  # pre-emptively kill any child processes we've previously tracked
+  while (@children) {
+    my $child = pop @children;
+    Log( LOG_DEBUG, "Killing child process $child" );
+    kill 'INT', $child;
+  }
+
   # Remote host mode!
   # Check if we have a ControlMaster session, create it if not
   if ( defined($host) ) {
+
+    # Check if we have a ControlMaster session, create it if not
     while (1) {
 
       # Master isn't running, start up a new ControlMaster
@@ -332,13 +339,6 @@ fi
   ( undef, $config->{version} ) = split( ' ', $setup_response );
   Log( LOG_DEBUG, "tmux version $config->{version} detected" );
 
-  # We've possibly fallen through the loop, so clean up any lingering child processes
-  while (@children) {
-    my $child = pop @children;
-    Log( LOG_DEBUG, "Killing child process $child" );
-    kill 'INT', $child;
-  }
-
   # Attach to control session in control mode
   @cmd = buildCommand( $host, [ $config->{tmux_bin}, qw(-C attach -t), $config->{control}, ] );
   Log( LOG_DEBUG, join( ' ', @cmd ) );
@@ -348,6 +348,7 @@ fi
   my ( @block, $function, $result );
 
   $pid = open2( $child_out, $child_in, @cmd );
+  Log( LOG_DEBUG, "Control session running as PID $pid" );
   push( @children, $pid );
 
   # Create our command channel
@@ -562,7 +563,7 @@ fi
     }
   } else {
     exit unless ( $config->{reconnect} );
-    Log( LOG_DEBUG, "ControlMaster is closed, attempting to reconnect" );
+    Log( LOG_DEBUG, "ControlMaster has closed, attempting to reconnect" );
   }
 }
 
@@ -623,7 +624,7 @@ sub LoadConfig {
     "closeas"        => 0,
     "background"     => 0,
     "log_facility"   => "",
-    "log_level"      => LOG_ALERT,
+    "log_level"      => LOG_NOTICE,
     "exitlast"       => 0,
     "terminal"       => [qw(xterm)],
     "ssh_args"       => [qw()],
@@ -686,6 +687,17 @@ sub LoadConfig {
 
   # Record if this is an ephemeral session
   $config->{ephemeral} = ( defined( $config->{hosts}{$chost}{$sess} ) ) ? 0 : 1;
+
+  # log level is little tricky
+  if ( defined( $cli{verbosity} ) ) {
+
+    # I've got two -v's and a log debug
+    if ( $cli{verbosity} > 2 ) {
+      $cli{log_level} = LOG_DEBUG;
+    } else {
+      $cli{log_level} = $cli{verbosity} + LOG_NOTICE;
+    }
+  }
 
   # Look up a number of keys that can be set at different levels
   # If no value can be found, use a sane default
