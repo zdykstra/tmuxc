@@ -80,6 +80,7 @@ GetOptions(
   "exitlast|E"   => \$cli{exitlast},
   "print|o"      => \$cli{printOptions},
   "swm|w"        => \$cli{swm},
+  "mwm|W"        => \$cli{mwm},
   "verbose|v+"   => sub {
     $cli{verbosity} += 1;
   },
@@ -639,6 +640,7 @@ sub LoadConfig {
     "skipnw"         => 0,
     "prettyps"       => 1,
     "swm"            => 0,
+    "mwm"            => 1,
     "on_connect"     => [qw()],
     "poe"            => "none",
   );
@@ -1147,6 +1149,8 @@ sub Launcher {
     for (@dead) {
       my ( $sess, $host ) = split( '@', $_, 2 );
       print $child_in "$sess\@$host\n";
+      print $child_in "$sess\@$host (Single Window Mode)\n";
+      print $child_in "$sess\@$host (Multi Window Mode)\n";
     }
     close($child_in);
     $response = <$child_out>;
@@ -1156,7 +1160,18 @@ sub Launcher {
   }
   exit unless defined($response);
   chomp($response);
-  LaunchNewInstance($response);
+
+  my $flags;
+  if ( $response =~ m/Single Window Mode/ ) {
+    ( $response, undef ) = split( ' ', $response );
+    $flags = "--swm";
+  }
+  if ( $response =~ m/Multi Window Mode/ ) {
+    ( $response, undef ) = split( ' ', $response );
+    $flags = "--mwm";
+  }
+
+  LaunchNewInstance( $response, $flags );
 }
 
 # Do the double fork dance and launch a new tmuxc instance
@@ -1654,6 +1669,10 @@ Open up a menu listing control options. The options take the form of session@hos
 =item B<--swm|w>
 
 Enable single-window-mode. This opens up a single terminal for an entire tmux session, consistent with typical tmux usage.
+
+=item B<--mwm|W>
+
+Enable multi-window-mode. This opens up a terminal for each window in the tmux session. This is the default behavior.
 
 =item B<--known|k> | B<--known|k=,>
 
