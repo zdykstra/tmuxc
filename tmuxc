@@ -248,6 +248,8 @@ while (1) {
     unless ( CheckControlMaster($host) ) {
 
       # Master isn't running, start up a new ControlMaster
+      my $failures = 0;
+      my $backoff = 1;
       while (1) {
         @cmd = buildCommand(
           undef,
@@ -269,11 +271,20 @@ while (1) {
         qx(@cmd);
 
         if ( ( $? >> 8 ) != 0 ) {
-          Log( LOG_INFO, "Retrying connection to $host in 5 seconds" );
-          sleep 5;
           unless ( $config->{reconnect} ) {
+            Log( LOG_INFO, "Unable to connect to $host, reconnect is not enabled" );
             exit;
           }
+
+          $failures += 1;
+          Log( LOG_INFO, "Retrying connection to $host in $backoff seconds ($failures failures)" );
+          sleep $backoff;
+
+          # Exponential backoff up to 64 seconds
+          unless ( $failures > 6 ) {
+            $backoff = ( 1 * 2**$failures );
+          }
+
         } else {
 
           # ControlMaster was successfully established
