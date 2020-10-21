@@ -3,7 +3,7 @@
 use strict;
 use warnings;
 
-our $VERSION = '1.7.1';
+our $VERSION = '1.8';
 
 use Getopt::Long qw(:config no_ignore_case auto_version);
 use Time::HiRes qw( sleep gettimeofday );
@@ -1778,6 +1778,10 @@ Instruct tmuxc to ignore all input from the command line and from tmux, until th
 =item B<LoadConfig>
 
 Instruct tmuxc to reload the configuration file from disk. The configuration file path discovered at the initial start of tmuxc is re-used.
+
+=item B<ToggleEphemeral>
+
+Flip the internal ephemeral flag for a running instance of tmuxc. This change is not persisted to the configuration file.
 
 =back
 

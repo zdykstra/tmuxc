@@ -133,7 +133,7 @@
 .\" ========================================================================
 .\"
 .IX Title "TMUXC 1"
-.TH TMUXC 1 "2020-08-07" "1.7.1" "tmuxc - TMUX terminal manager"
+.TH TMUXC 1 "2020-10-21" "1.8" "tmuxc - TMUX terminal manager"
 .\" For nroff, turn off justification.  Always turn off hyphenation; it makes
 .\" way too many mistakes in technical documents.
 .if n .ad l
@@ -186,10 +186,13 @@ Open up a menu listing control options. If one instance is running, the command 
 Enable purge-on-exit for sessions of type 'none', 'ephemeral' or 'all'. This executes a \fIkill-session\fR against the session on tmuxc exit.
 .IP "\fB\-\-singlemenu|M\fR" 4
 .IX Item "--singlemenu|M"
-Open up a menu listing control options. The options take the form of session@host % <action>, and are shown as a single-depth menu. Smart pagers (rofi, bemenu, etc) allow you to type partial words in any order to narrow down the option to execute.
+Open up a menu listing control options. The options take the form of session@host ~ <action>, and are shown as a single-depth menu. Smart pagers (rofi, bemenu, etc) allow you to type partial words in any order to narrow down the option to execute.
 .IP "\fB\-\-swm|w\fR" 4
 .IX Item "--swm|w"
 Enable single-window-mode. This opens up a single terminal for an entire tmux session, consistent with typical tmux usage.
+.IP "\fB\-\-mwm|W\fR" 4
+.IX Item "--mwm|W"
+Enable multi-window-mode. This opens up a terminal for each window in the tmux session. This is the default behavior.
 .IP "\fB\-\-known|k\fR | \fB\-\-known|k=,\fR" 4
 .IX Item "--known|k | --known|k=,"
 List active and inactive sessions. Takes an optional character argument to enable \s-1CSV\s0 output for machine parsing.
@@ -263,6 +266,9 @@ Instruct tmuxc to ignore all input from the command line and from tmux, until th
 .IP "\fBLoadConfig\fR" 6
 .IX Item "LoadConfig"
 Instruct tmuxc to reload the configuration file from disk. The configuration file path discovered at the initial start of tmuxc is re-used.
+.IP "\fBToggleEphemeral\fR" 6
+.IX Item "ToggleEphemeral"
+Flip the internal ephemeral flag for a running instance of tmuxc. This change is not persisted to the configuration file.
 .SH "AUTHOR"
 .IX Header "AUTHOR"
 Zach Dykstra <dykstra.zachary@gmail.com>
