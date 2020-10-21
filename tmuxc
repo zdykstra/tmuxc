@@ -752,9 +752,10 @@ sub LoadConfig {
   $config->{pidfile} = join( '', ( $config->{temp}, qw(pid/), $config->{session}, qw(@), $config->{chost}, qw(.pid) ) );
 
   %publicCommands = (
-    'KillSelf'   => \&KillSelf,
-    'PauseSelf'  => \&PauseSelf,
-    'LoadConfig' => \&LoadConfig,
+    'KillSelf'        => \&KillSelf,
+    'PauseSelf'       => \&PauseSelf,
+    'LoadConfig'      => \&LoadConfig,
+    'ToggleEphemeral' => \&ToggleEphemeral,
   );
 
   # The first field in the format string indicates the lookup key for %commandParse
@@ -784,6 +785,7 @@ sub LoadConfig {
     'Open All Windows'         => 'tmuxc BulkSpawn',
     'Pause Session'            => 'tmuxc PauseSelf',
     'Reload Configuration'     => 'tmuxc LoadConfig',
+    'Toggle Ephemeral'         => 'tmuxc ToggleEphemeral',
   );
 
   if ( defined( $cli{printOptions} ) ) {
@@ -824,14 +826,14 @@ sub Menu {
 
     # Put Create Ephemeral Session at the top
     foreach my $key ( sort keys %menu ) {
-      next unless $key =~ m/Ephemeral/;
+      next unless $key =~ m/Create Ephemeral Session/;
       print $child_in "$key\n";
     }
     for my $hostsession ( sort @sessions ) {
       foreach my $key ( sort keys %menu ) {
 
         # Add everything but Create Ephemeral Session
-        next if $key =~ m/Ephemeral/;
+        next if $key =~ m/Create Ephemeral Session/;
         print $child_in "$hostsession ~ $key\n";
       }
     }
@@ -888,15 +890,28 @@ sub RemoteSessions {
 
   # Prompt for a host if none were provided
   unless ( length($host) ) {
-    @prompt = @{ $config->{input_prompt} };
-    push( @prompt, "Host" );
-    my $pid = open2( $child_out, $child_in, @prompt );
+    my $pid = open2( $child_out, $child_in, @{ $config->{selector} } );
+    print $child_in "Enter unlisted host name\n";
+    foreach my $host ( sort keys %{ $config->{hosts} } ) {
+      print $child_in "$host\n";
+    }
 
-    print $child_in "";
     close($child_in);
     $host = <$child_out>;
     exit unless defined($host);
     chomp($host);
+
+    if ( $host eq "Enter unlisted host name" ) {
+      @prompt = @{ $config->{input_prompt} };
+      push( @prompt, "Host" );
+      $pid = open2( $child_out, $child_in, @prompt );
+
+      print $child_in "";
+      close($child_in);
+      $host = <$child_out>;
+      exit unless defined($host);
+      chomp($host);
+    }
   }
 
   my @cmd       = buildCommand( $host, [ $config->{tmux_bin}, qw(list-sessions) ] );
@@ -1560,6 +1575,11 @@ sub ClientMap {
       exit;
     }
   }
+}
+
+sub ToggleEphemeral {
+  $config->{ephemeral} ^= 1;
+  Log( LOG_DEBUG, "Ephemeral is now $config->{ephemeral}" );
 }
 
 sub PauseSelf {
