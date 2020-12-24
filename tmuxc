@@ -46,6 +46,10 @@ my @configtests = (
   join( '/', ( $ENV{'HOME'}, qw(.config/tmuxc/tmuxc.conf) ) ),
 );
 
+if ( defined( $ENV{'XDG_CONFIG_HOME'} ) ) {
+  push(@configtests, join( '/', ( $ENV{'XDG_CONFIG_HOME'}, qw( tmuxc.settings) ) ) );
+}
+
 foreach (@configtests) {
   if (-f) {
     $configfile = $_;
