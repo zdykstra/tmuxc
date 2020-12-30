@@ -1,4 +1,4 @@
-#!/usr/bin/env perl
+#!/bin/perl
 
 use strict;
 use warnings;
@@ -40,20 +40,32 @@ my (
 );
 
 # Looking for configs in all the right places
-my @configtests = (
-  join( '/', ( $ENV{'HOME'}, qw(.tmuxc.conf) ) ),
-  join( '/', ( $ENV{'HOME'}, qw(.config/tmuxc.conf) ) ),
-  join( '/', ( $ENV{'HOME'}, qw(.config/tmuxc/tmuxc.conf) ) ),
-);
+my @configtests;
+
+use Config;
+if ($Config{osname} eq "haiku") {
+  push(@configtests, "/boot/home/config/settings");
+}
+
+if ( defined( $ENV{'HOME'} ) ) {
+  push(@configtests, join( '/', ( $ENV{'HOME'}, qw(.tmuxc.conf) ) ) );
+  push(@configtests, join( '/', ( $ENV{'HOME'}, qw(.config/tmuxc.conf) ) ) );
+  push(@configtests, join( '/', ( $ENV{'HOME'}, qw(.config/tmuxc/tmuxc.conf) ) ) );
+}
 
 if ( defined( $ENV{'XDG_CONFIG_HOME'} ) ) {
   push(@configtests, join( '/', ( $ENV{'XDG_CONFIG_HOME'}, qw( tmuxc.settings) ) ) );
 }
 
-foreach (@configtests) {
-  if (-f) {
-    $configfile = $_;
+if ( scalar @configtests > 0 ) {
+  foreach (@configtests) {
+    if (-f) {
+      $configfile = $_;
+    }
   }
+} else {
+  print "Unable to find a configuration file\n";
+  exit;
 }
 
 unless ( length $configfile ) {
@@ -585,8 +597,8 @@ fi
 END {
   exit if $noclean;
 
-  if ( ( $config->{poe} eq "any" )
-    or ( $config->{ephemeral} and $config->{poe} eq "ephemeral" ) )
+  if ( ( exists $config->{poe} and  $config->{poe} eq "any" )
+    or ( ( exists $config->{ephemeral} and $config->{ephemeral} ) and ( exists $config->{poe} and $config->{poe} eq "ephemeral" ) ) )
   {
     my @cmd = buildCommand( $host, [ $config->{tmux_bin}, qw(kill-session -t), $config->{session}, ] );
     Log( LOG_DEBUG, "Killing session $config->{session}" );
@@ -604,8 +616,14 @@ END {
 sub CleanExit {
   exit if $noclean;
 
-  unlink $config->{command};
-  unlink $config->{pidfile};
+  if ( exists $config->{command} ) {
+    unlink $config->{command};
+  }
+
+  if ( exists $config->{pidfile} ) {
+    unlink $config->{pidfile};
+  }
+
   exit;
 }
 
