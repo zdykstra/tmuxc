@@ -43,18 +43,18 @@ my (
 my @configtests;
 
 use Config;
-if ($Config{osname} eq "haiku") {
-  push(@configtests, "/boot/home/config/settings");
+if ( $Config{osname} eq "haiku" ) {
+  push( @configtests, "/boot/home/config/settings" );
 }
 
 if ( defined( $ENV{'HOME'} ) ) {
-  push(@configtests, join( '/', ( $ENV{'HOME'}, qw(.tmuxc.conf) ) ) );
-  push(@configtests, join( '/', ( $ENV{'HOME'}, qw(.config/tmuxc.conf) ) ) );
-  push(@configtests, join( '/', ( $ENV{'HOME'}, qw(.config/tmuxc/tmuxc.conf) ) ) );
+  push( @configtests, join( '/', ( $ENV{'HOME'}, qw(.tmuxc.conf) ) ) );
+  push( @configtests, join( '/', ( $ENV{'HOME'}, qw(.config/tmuxc.conf) ) ) );
+  push( @configtests, join( '/', ( $ENV{'HOME'}, qw(.config/tmuxc/tmuxc.conf) ) ) );
 }
 
 if ( defined( $ENV{'XDG_CONFIG_HOME'} ) ) {
-  push(@configtests, join( '/', ( $ENV{'XDG_CONFIG_HOME'}, qw( tmuxc.settings) ) ) );
+  push( @configtests, join( '/', ( $ENV{'XDG_CONFIG_HOME'}, qw( tmuxc.settings) ) ) );
 }
 
 if ( scalar @configtests > 0 ) {
@@ -265,7 +265,7 @@ while (1) {
 
       # Master isn't running, start up a new ControlMaster
       my $failures = 0;
-      my $backoff = 1;
+      my $backoff  = 1;
       while (1) {
         @cmd = buildCommand(
           undef,
@@ -597,8 +597,11 @@ fi
 END {
   exit if $noclean;
 
-  if ( ( exists $config->{poe} and  $config->{poe} eq "any" )
-    or ( ( exists $config->{ephemeral} and $config->{ephemeral} ) and ( exists $config->{poe} and $config->{poe} eq "ephemeral" ) ) )
+  if (
+    ( exists $config->{poe} and $config->{poe} eq "any" )
+    or (  ( exists $config->{ephemeral} and $config->{ephemeral} )
+      and ( exists $config->{poe} and $config->{poe} eq "ephemeral" ) )
+    )
   {
     my @cmd = buildCommand( $host, [ $config->{tmux_bin}, qw(kill-session -t), $config->{session}, ] );
     Log( LOG_DEBUG, "Killing session $config->{session}" );
