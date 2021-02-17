@@ -319,7 +319,7 @@ while (1) {
   my $sess  = $config->{session};
 
   my $initialize = $config->{hosts}{$chost}{$sess}{initialize}
-    || [ $config->{tmux_bin}, qw(new-session -d -s), $sess ];
+    || [ qq(env $session_env=$config->{session}), $config->{tmux_bin}, qw(new-session -d -s), $sess ];
   $initialize = join( ' ', @{$initialize} );
 
   my $control = join( '/', $config->{chost}, $config->{control} );
