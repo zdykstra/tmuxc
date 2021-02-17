@@ -1331,7 +1331,7 @@ sub spawnSingleTerm {
     }
   }
 
-  my @cmd            = buildCommand( $host, [ $config->{tmux_bin}, qw(attach -t), $session, ] );
+  my @cmd            = buildCommand( $host, [ qq(env $session_env=$config->{session}), $config->{tmux_bin}, qw(attach -t), $session, ] );
   my $attach_command = join( ' ', @cmd );
 
   $session =~ s/\//-/g;
@@ -1375,7 +1375,7 @@ sub spawnTerm {
   print Log( LOG_DEBUG, $clone_command );
   print $child_in $clone_command;
 
-  my @cmd            = buildCommand( $host, [ $config->{tmux_bin}, qw(attach -t), $clone_session, ] );
+  my @cmd            = buildCommand( $host, [ qq(env $session_env=$config->{session}), $config->{tmux_bin}, qw(attach -t), $clone_session, ] );
   my $attach_command = join( ' ', @cmd );
 
   $clone_session =~ s/\//-/g;
