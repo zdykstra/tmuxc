@@ -421,7 +421,7 @@ fi
 
   # Single Window Mode short-circuits the entire control mode processing loop
 
-  if ( $config->{swm} ) {
+  if ( $config->{swm} and not $cli{mwm} ) {
     spawnSingleTerm( $host, $config->{control}, $child_in );
   } else {
 
