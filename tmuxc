@@ -254,8 +254,8 @@ while (1) {
   while (@children) {
     my $child = pop @children;
     Log( LOG_DEBUG, "Killing child process $child" );
-    waitpid $child, WNOHANG;
     kill 'INT', $child;
+    waitpid $child, 0;
   }
 
   # Remote host mode!
