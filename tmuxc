@@ -119,6 +119,7 @@ GetOptions(
     } else {
       $cli{session} = $session;
     }
+    $cli{session} =~ tr/\./-/;
   },
   "new|n" => sub {
     $cliAction = sub {
