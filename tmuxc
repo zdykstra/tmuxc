@@ -128,7 +128,6 @@ GetOptions(
     } else {
       $cli{session} = $session;
     }
-    $cli{session} =~ tr/\./-/;
   },
   "new|n" => sub {
     $cliAction = sub {
@@ -729,6 +728,9 @@ sub LoadConfig {
     # Not set at all in the config file, set a default
     $config->{session} = "global-session";
   }
+
+  # '.' is forbidden in tmux session names
+  $config->{session} =~ tr/\./-/;
 
   my $sess = $config->{session};
 
