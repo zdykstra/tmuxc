@@ -1078,6 +1078,10 @@ sub KnownSessions {
 
   my $instances = InstanceCheck;
 
+  if ( length($flag) ) {
+    print "# state,session name,pid,control socket\n";
+  }
+
   if ( defined( $instances->{running} ) ) {
     unless ( length($flag) ) {
       print "Active: \n";
@@ -1099,14 +1103,14 @@ sub KnownSessions {
     }
   }
   if ( defined( $instances->{dead} ) ) {
-    if ( $flag eq "" ) {
+    unless ( length($flag) ) {
       print "Inactive: \n";
     }
     for ( sort @{ $instances->{dead} } ) {
-      if ( $flag eq "" ) {
+      unless ( length($flag) ) {
         print "  $_\n";
       } else {
-        print join( $flag, qw(inactive), $_ );
+        print join( $flag, qw(inactive), $_, '', '' );
         print "\n";
       }
     }
