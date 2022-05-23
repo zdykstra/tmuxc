@@ -266,9 +266,21 @@ while (1) {
     waitpid $child, 0;
   }
 
+  my $chost = $config->{chost};
+  my $sess  = $config->{session};
+
   # Remote host mode!
   # Check if we have a ControlMaster session, create it if not
   if ( defined($host) ) {
+
+    if ($config->{hosts}{$chost}{$sess}{ssh_prereqs}) {
+      if (CheckSSHPrereqs($host, $config->{hosts}{$chost}{$sess}{ssh_prereqs}) ) {
+         Log( LOG_DEBUG, "SSH Prereqs executed successfully" );
+      } else {
+         Log( LOG_DEBUG, "Failed to execute SSH Prereqs for $host" );
+         exit;
+      }
+    }
 
     # Check if we have a ControlMaster session, create it if not
     unless ( CheckControlMaster($host) ) {
@@ -324,9 +336,6 @@ while (1) {
       Log( LOG_DEBUG, "Reusing ControlMaster session to $host" );
     }
   }
-
-  my $chost = $config->{chost};
-  my $sess  = $config->{session};
 
   my $initialize = $config->{hosts}{$chost}{$sess}{initialize}
     || [ qq(env $session_env=$config->{session}), $config->{tmux_bin}, qw(new-session -d -s), $sess ];
@@ -638,6 +647,21 @@ sub CleanExit {
   }
 
   exit;
+}
+
+sub CheckSSHPrereqs {
+  my $host = shift;
+
+  my $ssh_prereqs = shift;
+
+  my @cmd = buildCommand(
+    undef, $ssh_prereqs
+  );
+  Log( LOG_DEBUG, "Checking SSH Prereqs for $host" );
+  Log( LOG_DEBUG, join( ' ', @cmd ) );
+  qx(@cmd);
+
+  return ( $? >> 8 ) ? 0 : 1;
 }
 
 sub CheckControlMaster {
