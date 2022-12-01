@@ -172,6 +172,7 @@ If the default option is acceptable, you do not need to define it again in a con
 * `selector (default: rofi -dmenu -i)`: Define the menu command, used for picking a session / session action.
 * `skipnw (default 0)`: Do not launch a new terminal when a new window is created in tmux. 
 * `ssh_args(default [])`: Additional arguments to add to each SSH connection.
+* `ssh_prereqs(default[])`: An array of commands that is converted to a single shell command, run on the local host. If the exit code is 0, `tmuxc` will not launch the session.
 * `swm (default 0)`: Enable single-window-mode. This is the traditional approach to tmux, it simply opens a terminal with your full tmux session attached in it. Refer to `on_connect` for session tuning (set status on, for example, if it's off by default.)
 * `temp (default $HOME/.tmuxc/)`: The location of the runtime temp directory. While this can be changed on a per-host and per-session basis, it should be avoided. `tmuxc` uses a shared directory to discover other running instances and to insert commands into other running sessions. Unless a shared directory is used, instances will be 'lost' to each other.
 * `terminal (default xterm)`: The default terminal to use when opening up new windows.

@@ -3,14 +3,14 @@
 use strict;
 use warnings;
 
-our $VERSION = '1.8.1';
+our $VERSION = '1.9';
 
 use Getopt::Long qw(:config no_ignore_case auto_version);
-use Time::HiRes qw( sleep gettimeofday );
-use POSIX qw ( mkfifo setsid WNOHANG );
-use FindBin qw ($RealScript $RealBin);
-use Sys::Syslog qw(:standard :macros);
-use Pod::Usage qw(pod2usage);
+use Time::HiRes  qw( sleep gettimeofday );
+use POSIX        qw ( mkfifo setsid WNOHANG );
+use FindBin      qw ($RealScript $RealBin);
+use Sys::Syslog  qw(:standard :macros);
+use Pod::Usage   qw(pod2usage);
 use File::Basename;
 use Sys::Hostname;
 use IPC::Open2;
@@ -273,12 +273,12 @@ while (1) {
   # Check if we have a ControlMaster session, create it if not
   if ( defined($host) ) {
 
-    if ($config->{hosts}{$chost}{$sess}{ssh_prereqs}) {
-      if (CheckSSHPrereqs($host, $config->{hosts}{$chost}{$sess}{ssh_prereqs}) ) {
-         Log( LOG_DEBUG, "SSH Prereqs executed successfully" );
+    if ( $config->{hosts}{$chost}{$sess}{ssh_prereqs} ) {
+      if ( CheckSSHPrereqs( $host, $config->{hosts}{$chost}{$sess}{ssh_prereqs} ) ) {
+        Log( LOG_DEBUG, "SSH Prereqs executed successfully" );
       } else {
-         Log( LOG_DEBUG, "Failed to execute SSH Prereqs for $host" );
-         exit;
+        Log( LOG_DEBUG, "Failed to execute SSH Prereqs for $host" );
+        exit;
       }
     }
 
@@ -654,9 +654,7 @@ sub CheckSSHPrereqs {
 
   my $ssh_prereqs = shift;
 
-  my @cmd = buildCommand(
-    undef, $ssh_prereqs
-  );
+  my @cmd = buildCommand( undef, $ssh_prereqs );
   Log( LOG_DEBUG, "Checking SSH Prereqs for $host" );
   Log( LOG_DEBUG, join( ' ', @cmd ) );
   qx(@cmd);
