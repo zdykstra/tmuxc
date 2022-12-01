@@ -274,12 +274,13 @@ while (1) {
   if ( defined($host) ) {
 
     if ( $config->{hosts}{$chost}{$sess}{ssh_prereqs} ) {
-      if ( CheckSSHPrereqs( $host, $config->{hosts}{$chost}{$sess}{ssh_prereqs} ) ) {
-        Log( LOG_DEBUG, "SSH Prereqs executed successfully" );
-      } else {
-        Log( LOG_DEBUG, "Failed to execute SSH Prereqs for $host" );
-        exit;
+      foreach my $prereq ( @{ $config->{hosts}{$chost}{$sess}{ssh_prereqs} } ) {
+        unless ( CheckSSHPrereqs( $host, [$prereq] ) ) {
+          Log( LOG_DEBUG, "SSH prereq '$prereq' failed" );
+          exit;
+        }
       }
+      Log( LOG_DEBUG, "SSH prereqs executed successfully" );
     }
 
     # Check if we have a ControlMaster session, create it if not
@@ -655,8 +656,7 @@ sub CheckSSHPrereqs {
   my $ssh_prereqs = shift;
 
   my @cmd = buildCommand( undef, $ssh_prereqs );
-  Log( LOG_DEBUG, "Checking SSH Prereqs for $host" );
-  Log( LOG_DEBUG, join( ' ', @cmd ) );
+  Log( LOG_DEBUG, "Executing connectivity test: " . join( ' ', @cmd ) );
   qx(@cmd);
 
   return ( $? >> 8 ) ? 0 : 1;
