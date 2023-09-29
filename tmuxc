@@ -409,6 +409,7 @@ fi
 
   # Install our USR1 handler to process anything in the FIFO
   $SIG{USR1} = sub {
+    CONTROL_FIFO->clearerr;
     my @commands = <CONTROL_FIFO>;
     Log( LOG_DEBUG, "Processing commands in FIFO handler" );
     Log( LOG_DEBUG, \@commands );
