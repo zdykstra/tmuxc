@@ -298,7 +298,7 @@ while (1) {
             qq(-o ServerAliveInterval=$config->{alive_interval}),
             qq(-o ServerAliveCountMax=$config->{alive_count}),
             qq(-o ControlPersist=$config->{persist}),
-            qq(-o ControlPath=$config->{temp}ssh/%C),
+            qq(-o ControlPath=$config->{temp}ssh/$config->{ssh_control}),
             qq(-o ControlMaster=yes),
             qq(@{ $config->{ssh_args} }),
             qq(-f -N),
@@ -671,7 +671,7 @@ sub CheckControlMaster {
     [
       qq(ssh -q -O check),
       qq(-o ConnectTimeout=$config->{conn_timeout}),
-      qq(-o ControlPath=$config->{temp}ssh/%C 2>/dev/null),
+      qq(-o ControlPath=$config->{temp}ssh/$config->{ssh_control} 2>/dev/null),
       $host
     ]
   );
@@ -697,6 +697,7 @@ sub LoadConfig {
     "exitlast"       => 0,
     "terminal"       => [qw(xterm)],
     "ssh_args"       => [qw()],
+    "ssh_control"    => "%C",
     "alive_interval" => 3,
     "alive_count"    => 2,
     "conn_timeout"   => 3,
@@ -1352,7 +1353,7 @@ sub buildCommand {
   my $remote = shift;
   return @{ $_[0] } unless $remote;
 
-  my $cpath = join( '', $config->{temp}, qw(ssh/%C) );
+  my $cpath = join( '', $config->{temp}, qw(ssh/), $config->{ssh_control} );
   my @cmd =
     grep { length } qw(ssh -q -t), @{ $config->{ssh_args} }, qw(-S), $cpath,
     $remote, shellQuote(@_);
