@@ -253,18 +253,10 @@ Log( LOG_NOTICE, "running as PID $$" );
 my $session_env = join( '_', $config->{env_prefix}, "NAME" );
 $ENV{$session_env} = $config->{session};
 
+%mapping = ();
 while (1) {
 
-  %mapping = ();
   my @cmd;
-
-  # pre-emptively kill any child processes we've previously tracked
-  while (@children) {
-    my $child = pop @children;
-    Log( LOG_DEBUG, "Killing child process $child" );
-    kill 'INT', $child;
-    waitpid $child, 0;
-  }
 
   my $chost = $config->{chost};
   my $sess  = $config->{session};
@@ -284,58 +276,7 @@ while (1) {
     }
 
     # Check if we have a ControlMaster session, create it if not
-    unless ( CheckControlMaster($host) ) {
-
-      # Master isn't running, start up a new ControlMaster
-      my $failures = 0;
-      my $backoff  = 1;
-      while (1) {
-        @cmd = buildCommand(
-          undef,
-          [
-            qq(ssh),
-            qq(-o ConnectTimeout=$config->{conn_timeout}),
-            qq(-o ServerAliveInterval=$config->{alive_interval}),
-            qq(-o ServerAliveCountMax=$config->{alive_count}),
-            qq(-o ControlPersist=$config->{persist}),
-            qq(-o ControlPath=$config->{temp}ssh/$config->{ssh_control}),
-            qq(-o ControlMaster=yes),
-            qq(@{ $config->{ssh_args} }),
-            qq(-f -N),
-            $host
-          ]
-        );
-        Log( LOG_DEBUG, "ControlMaster for $host not running, creating one" );
-        Log( LOG_DEBUG, join( ' ', @cmd ) );
-        qx(@cmd);
-
-        if ( ( $? >> 8 ) != 0 ) {
-          unless ( $config->{reconnect} ) {
-            Log( LOG_INFO, "Unable to connect to $host, reconnect is not enabled" );
-            exit;
-          }
-
-          $failures += 1;
-          Log( LOG_INFO, "Retrying connection to $host in $backoff seconds ($failures failures)" );
-          sleep $backoff;
-
-          # Exponential backoff up to 64 seconds
-          unless ( $failures > 6 ) {
-            $backoff = ( 1 * 2**$failures );
-          }
-
-        } else {
-
-          # ControlMaster was successfully established
-          Log( LOG_DEBUG, "ControlMaster session to $host established" );
-          last;
-        }
-      }
-    } else {
-
-      # ControlMaster is already established
-      Log( LOG_DEBUG, "Reusing ControlMaster session to $host" );
-    }
+    CheckControlMaster($host) || CreateControlMaster($host);
   }
 
   my $initialize = $config->{hosts}{$chost}{$sess}{initialize}
@@ -457,7 +398,7 @@ fi
     }
 
     # Attach clients, force-regenerate a client map
-    print $child_in $commandText{'BulkSpawn'};
+    unless (%mapping) { print $child_in $commandText{'BulkSpawn'}; }
     print $child_in $commandText{'ClientMap'};
 
     # Kick off a RefreshClient command to disable output if possible
@@ -671,8 +612,8 @@ sub CheckControlMaster {
     [
       qq(ssh -q -O check),
       qq(-o ConnectTimeout=$config->{conn_timeout}),
-      qq(-o ControlPath=$config->{temp}ssh/$config->{ssh_control} 2>/dev/null),
-      $host
+      qq(-o ControlPath=$config->{temp}ssh/$config->{ssh_control}),
+      $host, qq(2>/dev/null)
     ]
   );
   Log( LOG_DEBUG, "Checking ControlMaster for $host" );
@@ -680,6 +621,64 @@ sub CheckControlMaster {
   qx(@cmd);
 
   return ( $? >> 8 ) ? 0 : 1;
+}
+
+sub CreateControlMaster {
+  my $host = shift;
+
+  # Check if we have a ControlMaster session, create it if not
+  unless ( CheckControlMaster($host) ) {
+
+    # Master isn't running, start up a new ControlMaster
+    my $failures = 0;
+    my $backoff  = 1;
+    while (1) {
+      my @cmd = buildCommand(
+        undef,
+        [
+          qq(ssh),
+          qq(-o ConnectTimeout=$config->{conn_timeout}),
+          qq(-o ServerAliveInterval=$config->{alive_interval}),
+          qq(-o ServerAliveCountMax=$config->{alive_count}),
+          qq(-o ControlPersist=$config->{persist}),
+          qq(-o ControlPath=$config->{temp}ssh/$config->{ssh_control}),
+          qq(-o ControlMaster=yes),
+          qq(@{ $config->{ssh_args} }),
+          qq(-f -N),
+          $host
+        ]
+      );
+      Log( LOG_DEBUG, "ControlMaster for $host not running, creating one" );
+      Log( LOG_DEBUG, join( ' ', @cmd ) );
+      qx(@cmd);
+
+      if ( ( $? >> 8 ) != 0 ) {
+        unless ( $config->{reconnect} ) {
+          Log( LOG_INFO, "Unable to connect to $host, reconnect is not enabled" );
+          exit;
+        }
+
+        $failures += 1;
+        Log( LOG_INFO, "Retrying connection to $host in $backoff seconds ($failures failures)" );
+        sleep $backoff;
+
+        # Exponential backoff up to 64 seconds
+        unless ( $failures > 6 ) {
+          $backoff = ( 1 * 2**$failures );
+        }
+
+      } else {
+
+        # ControlMaster was successfully established
+        Log( LOG_DEBUG, "ControlMaster session to $host established" );
+        return;
+      }
+    }
+  } else {
+
+    # ControlMaster is already established
+    Log( LOG_DEBUG, "Reusing ControlMaster session to $host" );
+  }
 }
 
 # Load our default config file / user defined
@@ -1420,11 +1419,53 @@ sub spawnTerm {
     [ qq(env $session_env=$config->{session}), $config->{tmux_bin}, qw(attach -t), $clone_session, ] );
   my $attach_command = join( ' ', @cmd );
 
+  @cmd = buildCommand(
+    undef,
+    [
+      qq(ssh -q -O check),
+      qq(-o ConnectTimeout=$config->{conn_timeout}),
+      qq(-o ControlPath=$config->{temp}ssh/$config->{ssh_control}),
+      $host, qq(2>/dev/null)
+    ]
+  );
+
+  my $check_command = join( ' ', @cmd );
+
+  @cmd = buildCommand(
+    $host,
+    [
+      qq($config->{tmux_bin}),
+      qw(new-session -d -t),
+      $session, qw(-s),
+      $clone_session,
+      qw(';' select-window -t),
+      $window
+    ]
+  );
+  my $rclone_command = join( ' ', @cmd );
+
   $clone_session =~ s/\//-/g;
   my $script       = join( '', ( $config->{temp}, $clone_session ) );
   my $start_script = qq|#!/bin/sh
-test -f $script && rm $script
-exec $attach_command
+  shost=$host
+  if [ -n \${shost} ]; then
+    while true; do
+      if $check_command ; then
+        $rclone_command
+        $attach_command
+        ret=\$?
+        echo "Attach command returned \$ret"
+        if [ \${ret} -ne 255 ]; then
+	  exit
+        fi
+      else
+        echo "Waiting for SSH session to become available"
+      fi
+      sleep 1
+    done
+  else
+    exec $attach_command
+  fi
 |;
 
   open SCRIPT, '>', $script;
