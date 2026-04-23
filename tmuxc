@@ -1458,8 +1458,6 @@ sub spawnTerm {
         if [ \${ret} -ne 255 ]; then
 	  exit
         fi
-      else
-        echo "Waiting for SSH session to become available"
       fi
       sleep 1
     done
